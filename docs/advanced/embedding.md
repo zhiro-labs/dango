@@ -458,18 +458,37 @@ async def create_event_with_ui(title: str, date: str, time: str, run_context: Ru
     return ""
 ```
 
+Add to `.env`:
+
+```env
+CHAT_SYS_PROMPT_PATH=config/chat_sys_prompt.txt
+```
+
+Create `config/chat_sys_prompt.txt`:
+
+```
+你是 Neko，一個 Discord 活動提醒助理。
+你可以幫助使用者建立活動、查詢活動清單、刪除活動，以及設定時區和提醒頻道。
+用繁體中文回覆。
+```
+
+Then in `on_ready` or `setup_hook` — add alongside existing commands:
+
 ```python
-# In on_ready or setup_hook — add alongside existing commands:
+import os
 from dango.commands import ChatCog
 from dango.workflow import create_discord_workflow
 from dango.utils.runtime_config import RuntimeConfig
 from neko_tools import set_reminder_timezone, list_events, create_event_with_ui
 
+with open(os.getenv("CHAT_SYS_PROMPT_PATH", "config/chat_sys_prompt.txt"), encoding="utf-8") as f:
+    chat_system_prompt = f.read()
+
 workflow = create_discord_workflow()
 runtime_config = RuntimeConfig("config/runtime.yml")
 
 await bot.add_cog(ChatCog(
-    bot, workflow, SYSTEM_PROMPT, runtime_config,
+    bot, workflow, chat_system_prompt, runtime_config,
     extra_tools=[set_reminder_timezone, list_events, create_event_with_ui],
 ))
 ```
