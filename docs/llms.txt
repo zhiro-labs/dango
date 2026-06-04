@@ -17,7 +17,7 @@
 
 - [Model Providers & Routing](https://raw.githubusercontent.com/zhiro-labs/dango/main/docs/features/models.md): `provider:model_id` format, supported providers, dual-model AUTO_ROUTE, error fallback, local models, context token budget.
 - [Tools](https://raw.githubusercontent.com/zhiro-labs/dango/main/docs/features/tools.md): DuckDuckGo search, website fetching, workspace file access, custom HTTP APIs, SQL databases.
-- [Workflow Architecture](https://raw.githubusercontent.com/zhiro-labs/dango/main/docs/features/workflow.md): Four-step Agno Workflow — FetchHistory → LLMChat → ExtractRenderTables → SendResponse.
+- [Workflow Architecture](https://raw.githubusercontent.com/zhiro-labs/dango/main/docs/features/workflow.md): Four-step Agno Workflow — FetchHistory → LLMChat → ExtractRenderTables → SendResponse. Entry points: `on_message` (chat) and `on_interaction` (button clicks, modal submits, context menus — routed via `dango_component:` / `dango_modal:` custom_id prefixes).
 
 ## Usage
 
@@ -26,5 +26,5 @@
 
 ## Advanced
 
-- [Embedding into Another Bot](https://raw.githubusercontent.com/zhiro-labs/dango/main/docs/advanced/embedding.md): Load Dango's Cogs into an existing discord.py bot; expose your bot's commands as Agno tools with `@discord_tool`.
+- [Embedding into Another Bot](https://raw.githubusercontent.com/zhiro-labs/dango/main/docs/advanced/embedding.md): Load Dango's Cogs into an existing discord.py bot. Wrap commands with `@discord_tool`; access Discord context via `get_discord_context()`, `get_discord_bot()`, `get_discord_interaction()`; enforce access with `check_roles()` / `check_permissions()`; send embeds with `set_discord_response()`; mark responses private with `set_ephemeral()`; register right-click menus with `ContextMenuDef`. Includes full Neko reminder bot integration example.
 - [VPS Deployment](https://raw.githubusercontent.com/zhiro-labs/dango/main/docs/advanced/vps.md): Secure the dashboard with SSH tunneling; configure Docker auto-restart.
