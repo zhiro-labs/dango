@@ -386,7 +386,7 @@ async def set_reminder_timezone(timezone: str, run_context: RunContext) -> str:
     ctx = get_discord_context(run_context)
     db.set_timezone(ctx["guild_id"], timezone)
     set_ephemeral(run_context)
-    return f"已將伺服器時區設定為 `{timezone}`。"
+    return f"Server timezone set to `{timezone}`."
 
 
 @discord_tool(name="list_events")
@@ -396,14 +396,14 @@ async def list_events(run_context: RunContext) -> str:
     bot = get_discord_bot(run_context)
     reminder_channel_id = db.get_reminder_channel(ctx["guild_id"])
     if not reminder_channel_id:
-        return "⚠️ 尚未設定提醒頻道。"
+        return "⚠️ No reminder channel configured. Use `/set-reminder-channel` first."
 
     events = db.get_upcoming_events(reminder_channel_id)
     if not events:
-        return "目前沒有尚未到來的活動。"
+        return "No upcoming events."
 
     guild = bot.get_guild(ctx["guild_id"])
-    embed = discord.Embed(title="即將到來的活動", color=discord.Color.blurple())
+    embed = discord.Embed(title="Upcoming Events", color=discord.Color.blurple())
     for event in events:
         roles = [guild.get_role(rid) for rid in event.role_ids]
         users = [guild.get_member(uid) for uid in event.user_ids]
@@ -433,7 +433,7 @@ async def create_event_with_ui(title: str, date: str, time: str, run_context: Ru
     parsed_date = parse_date(date)
     parsed_time = parse_time(time)
     if not parsed_date or not parsed_time:
-        return "❌ 日期或時間格式錯誤。"
+        return "❌ Invalid date or time format."
 
     from zoneinfo import ZoneInfo
     tz = ZoneInfo(db.get_timezone(ctx["guild_id"]))
@@ -451,7 +451,7 @@ async def create_event_with_ui(title: str, date: str, time: str, run_context: Ru
         creator=creator,
     )
     await channel.send(
-        f"**{title}** — {discord_ts(event_dt, 'F')}\n請選擇身份組與提醒時間：",
+        f"**{title}** — {discord_ts(event_dt, 'F')}\nSelect roles and reminder times:",
         view=view,
     )
     set_discord_response(run_context, suppress_text=True)
@@ -467,9 +467,9 @@ CHAT_SYS_PROMPT_PATH=config/chat_sys_prompt.txt
 Create `config/chat_sys_prompt.txt`:
 
 ```
-你是 Neko，一個 Discord 活動提醒助理。
-你可以幫助使用者建立活動、查詢活動清單、刪除活動，以及設定時區和提醒頻道。
-用繁體中文回覆。
+You are Neko, a Discord event reminder assistant.
+You can help users create events, list upcoming events, delete events,
+and configure the reminder timezone and channel.
 ```
 
 Then in `on_ready` or `setup_hook` — add alongside existing commands:
@@ -493,7 +493,7 @@ await bot.add_cog(ChatCog(
 ))
 ```
 
-Users can now use `/event` as before **and** say "建立 Python 讀書會，6/7 晚上 7 點" in natural language.
+Users can now use `/event` as before **and** say "Create a Python book club event on June 7th at 7pm" in natural language.
 
 ---
 
