@@ -586,6 +586,9 @@ async def call_discord_agent(step_input: StepInput) -> StepOutput:
         "channel_name": message_data.get("channel_name", ""),
         "guild_id": message_data.get("guild_id"),
         "guild_name": message_data.get("guild_name", ""),
+        # Discord objects — use get_discord_bot() / get_discord_interaction() helpers
+        "_bot": message_data.get("_bot"),
+        "_interaction": message_data.get("_interaction"),
     }
 
     fallback_name: str | None = None
