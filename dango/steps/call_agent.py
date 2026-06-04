@@ -580,6 +580,8 @@ async def call_discord_agent(step_input: StepInput) -> StepOutput:
         "chat_sys_prompt": message_data["_chat_sys_prompt"],
         "history_limit": message_data.get("_history_limit"),
         # Discord context — accessible inside tools via run_context.session_state
+        "author_id": message_data.get("author_id"),
+        "author_roles": message_data.get("author_roles", []),
         "channel_id": message_data.get("channel_id"),
         "channel_name": message_data.get("channel_name", ""),
         "guild_id": message_data.get("guild_id"),

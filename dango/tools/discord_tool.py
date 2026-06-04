@@ -115,21 +115,58 @@ Loading into Neko's bot
 from agno.run.base import RunContext
 from agno.tools import tool as discord_tool
 
-__all__ = ["discord_tool", "RunContext", "get_discord_context"]
+__all__ = ["discord_tool", "RunContext", "get_discord_context", "check_roles"]
 
 
 def get_discord_context(run_context: RunContext) -> dict:
     """Extract Discord request context from Agno's RunContext.
 
-    Returns a dict with keys: channel_id, channel_name, guild_id,
-    guild_name, author_name.  All values may be None/empty if the
-    message originated from a DM or before context was populated.
+    Returns a dict with keys: author_id, author_name, author_roles,
+    channel_id, channel_name, guild_id, guild_name.  All values may be
+    None/empty if the message originated from a DM or before context was
+    populated.
     """
     state = run_context.session_state or {}
     return {
+        "author_id": state.get("author_id"),
+        "author_name": state.get("author_name", ""),
+        "author_roles": state.get("author_roles", []),
         "channel_id": state.get("channel_id"),
         "channel_name": state.get("channel_name", ""),
         "guild_id": state.get("guild_id"),
         "guild_name": state.get("guild_name", ""),
-        "author_name": state.get("author_name", ""),
     }
+
+
+def check_roles(
+    run_context: RunContext,
+    any_of: list[str] | None = None,
+    all_of: list[str] | None = None,
+) -> str | None:
+    """Return an error string if the author lacks required roles, else None.
+
+    Args:
+        run_context: Agno RunContext injected by the framework.
+        any_of: User must have at least one of these role names.
+        all_of: User must have every one of these role names.
+
+    Usage::
+
+        @discord_tool(name="ban_user")
+        async def ban_user(username: str, run_context: RunContext) -> str:
+            if err := check_roles(run_context, any_of=["Moderator", "Admin"]):
+                return err
+            ...
+    """
+    ctx = get_discord_context(run_context)
+    user_roles = set(ctx["author_roles"])
+
+    if any_of and not user_roles.intersection(any_of):
+        needed = " / ".join(any_of)
+        return f"❌ This command requires one of these roles: {needed}"
+
+    if all_of and not set(all_of).issubset(user_roles):
+        missing = set(all_of) - user_roles
+        return f"❌ Missing required roles: {', '.join(sorted(missing))}"
+
+    return None

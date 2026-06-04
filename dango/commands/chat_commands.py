@@ -35,15 +35,18 @@ def _build_message_data(message: discord.Message, bot_user_id: int) -> dict[str,
 
     guild_id = None
     guild_name = ""
+    author_roles: list[str] = []
     if message.guild:
         guild_id = int(message.guild.id)
         guild_name = str(message.guild.name)
+        author_roles = [r.name for r in message.author.roles if r.name != "@everyone"]
 
     return {
         "content": str(message.clean_content) if message.clean_content else "",
         "embeds": embeds,
         "author_id": author_id,
         "author_name": str(message.author.display_name),
+        "author_roles": author_roles,
         "channel_id": channel_id,
         "channel_name": channel_name,
         "message_id": message_id,
