@@ -14,6 +14,59 @@ from ..steps.call_agent import deep_agent
 from ..utils.discord_helpers import format_reply_context
 
 
+def _build_interaction_message_data(interaction: discord.Interaction, bot_user_id: int) -> dict[str, Any]:
+    author = interaction.user
+    channel = interaction.channel
+    guild = interaction.guild
+
+    author_roles: list[str] = []
+    if guild and isinstance(author, discord.Member):
+        author_roles = [r.name for r in author.roles if r.name != "@everyone"]
+
+    channel_name = ""
+    if channel:
+        channel_name = getattr(channel, "name", "DM")
+
+    if interaction.type == discord.InteractionType.modal_submit:
+        modal_id = interaction.data.get("custom_id", "").removeprefix("dango_modal:")
+        fields: dict[str, str] = {}
+        for row in interaction.data.get("components", []):
+            for comp in row.get("components", []):
+                fields[comp.get("custom_id", "")] = comp.get("value", "")
+        fields_text = "\n".join(f"{k}: {v}" for k, v in fields.items())
+        content = f"[Modal submitted: {modal_id}]\n{fields_text}"
+        message_id = None
+    else:
+        component_id = interaction.data.get("custom_id", "").removeprefix("dango_component:")
+        selected: list[str] = interaction.data.get("values", [])
+        original_content = interaction.message.content if interaction.message else ""
+        if selected:
+            content = f"[Selected: {', '.join(selected)}] (component: {component_id})\nContext: {original_content}"
+        else:
+            content = f"[Button: {component_id}]\nContext: {original_content}"
+        message_id = interaction.message.id if interaction.message else None
+
+    return {
+        "content": content,
+        "embeds": [],
+        "author_id": int(author.id),
+        "author_name": str(author.display_name),
+        "author_roles": author_roles,
+        "channel_id": int(channel.id) if channel else None,
+        "channel_name": channel_name,
+        "message_id": message_id,
+        "bot_user_id": int(bot_user_id),
+        "guild_id": int(guild.id) if guild else None,
+        "guild_name": str(guild.name) if guild else "",
+        "timestamp": datetime.now().isoformat(),
+        "created_at": datetime.now().isoformat(),
+        "is_dm": guild is None,
+        "has_embeds": False,
+        "message_type": "interaction",
+        "attachments": [],
+    }
+
+
 def _build_message_data(message: discord.Message, bot_user_id: int) -> dict[str, Any]:
     author_id = int(message.author.id)
     channel_id = int(message.channel.id)
@@ -91,6 +144,42 @@ class ChatCog(commands.Cog):
             print(f"🔧 [ChatCog] Built agent pair with {len(extra_tools)} extra tool(s)")
         else:
             self._agents = None
+
+    @commands.Cog.listener()
+    async def on_interaction(self, interaction: discord.Interaction):
+        if interaction.type == discord.InteractionType.modal_submit:
+            if interaction.data.get("custom_id", "").startswith("dango_modal:"):
+                await self._handle_dango_interaction(interaction)
+        elif interaction.type == discord.InteractionType.component:
+            if interaction.data.get("custom_id", "").startswith("dango_component:"):
+                await self._handle_dango_interaction(interaction)
+
+    async def _handle_dango_interaction(self, interaction: discord.Interaction) -> None:
+        print(f"🔘 [on_interaction] {interaction.type.name} from {interaction.user.display_name}")
+        try:
+            await interaction.response.defer()
+        except discord.InteractionResponded:
+            pass
+
+        message_data = _build_interaction_message_data(interaction, self.bot.user.id)
+        message_data["_bot"] = self.bot
+        message_data["_chat_sys_prompt"] = self.chat_system_prompt
+        message_data["_history_limit"] = self.runtime_config.history_limit
+        message_data["_interaction"] = interaction
+        if self._agents is not None:
+            message_data["_agents"] = self._agents
+
+        try:
+            await self.discord_workflow.arun(input=message_data)
+            print(f"✅ [on_interaction] Workflow completed")
+        except Exception as e:
+            print(f"❌ [on_interaction] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            try:
+                await interaction.followup.send("Sorry, an error occurred.", ephemeral=True)
+            except Exception:
+                pass
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):

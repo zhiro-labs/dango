@@ -21,7 +21,7 @@ async def extract_and_render_tables(step_input: StepInput) -> StepOutput:
 
     llm_response = data.get("llm_response", "")
     message_data = data["message_data"]
-    message_id = message_data["message_id"]
+    message_id = message_data.get("message_id") or message_data.get("channel_id", "0")
 
     print("📊 [extract_and_render_tables] Extracting tables from LLM response")
 
@@ -36,6 +36,8 @@ async def extract_and_render_tables(step_input: StepInput) -> StepOutput:
                 "table_images": [],
                 "extracted_tables_files": [],
                 "message_data": message_data,
+                "fallback_sysinfo": data.get("fallback_sysinfo"),
+                "ephemeral": data.get("ephemeral", False),
             }
         )
 
@@ -88,6 +90,8 @@ async def extract_and_render_tables(step_input: StepInput) -> StepOutput:
             "table_images": rendered_images,
             "extracted_tables_files": extracted_files,
             "message_data": message_data,
+            "fallback_sysinfo": data.get("fallback_sysinfo"),
+            "ephemeral": data.get("ephemeral", False),
         }
     )
 

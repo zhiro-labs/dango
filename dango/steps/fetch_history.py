@@ -44,13 +44,21 @@ async def fetch_and_process_history(step_input: StepInput) -> StepOutput:
             )
 
     try:
-        target = await channel.fetch_message(message_id)
-        msgs = [
-            m
-            async for m in channel.history(
-                limit=history_limit, before=target, oldest_first=False
-            )
-        ]
+        if message_id:
+            target = await channel.fetch_message(message_id)
+            msgs = [
+                m
+                async for m in channel.history(
+                    limit=history_limit, before=target, oldest_first=False
+                )
+            ]
+        else:
+            msgs = [
+                m
+                async for m in channel.history(
+                    limit=history_limit, oldest_first=False
+                )
+            ]
 
         # Cut history at [new chat] marker
         for i, msg in enumerate(msgs):

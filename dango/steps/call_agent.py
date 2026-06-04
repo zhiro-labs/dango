@@ -615,6 +615,7 @@ async def call_discord_agent(step_input: StepInput) -> StepOutput:
                 "error": True,
                 "error_message": format_sysinfo(body),
                 "message_data": message_data,
+                "ephemeral": session_state.get("_ephemeral", False),
             }
         )
 
@@ -625,6 +626,7 @@ async def call_discord_agent(step_input: StepInput) -> StepOutput:
         content={
             "llm_response": llm_response,
             "message_data": message_data,
+            "ephemeral": session_state.get("_ephemeral", False),
             "fallback_sysinfo": (
                 format_sysinfo(f"⚡ {model_name} failed — response served by {fallback_name}.")
                 if fallback_name else None
