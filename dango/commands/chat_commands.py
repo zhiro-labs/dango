@@ -403,12 +403,18 @@ class ChatCog(commands.Cog):
             channel_name = channel.name if hasattr(channel, "name") else "DM"
             guild_id = interaction.guild.id if interaction.guild else None
             guild_name = interaction.guild.name if interaction.guild else ""
+            author_roles = (
+                [r.name for r in author.roles if r.name != "@everyone"]
+                if interaction.guild and isinstance(author, discord.Member)
+                else []
+            )
 
             message_data = {
                 "content": message,
                 "embeds": [],
                 "author_id": author.id,
                 "author_name": author.display_name,
+                "author_roles": author_roles,
                 "channel_id": channel.id,
                 "channel_name": channel_name,
                 "message_id": sent.id,
