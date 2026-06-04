@@ -582,6 +582,7 @@ async def call_discord_agent(step_input: StepInput) -> StepOutput:
         # Discord context — accessible inside tools via run_context.session_state
         "author_id": message_data.get("author_id"),
         "author_roles": message_data.get("author_roles", []),
+        "_author_permissions": message_data.get("author_permissions", set()),
         "channel_id": message_data.get("channel_id"),
         "channel_name": message_data.get("channel_name", ""),
         "guild_id": message_data.get("guild_id"),
@@ -619,6 +620,7 @@ async def call_discord_agent(step_input: StepInput) -> StepOutput:
                 "error_message": format_sysinfo(body),
                 "message_data": message_data,
                 "ephemeral": session_state.get("_ephemeral", False),
+                "discord_response": session_state.get("_discord_response"),
             }
         )
 
@@ -630,6 +632,7 @@ async def call_discord_agent(step_input: StepInput) -> StepOutput:
             "llm_response": llm_response,
             "message_data": message_data,
             "ephemeral": session_state.get("_ephemeral", False),
+            "discord_response": session_state.get("_discord_response"),
             "fallback_sysinfo": (
                 format_sysinfo(f"⚡ {model_name} failed — response served by {fallback_name}.")
                 if fallback_name else None

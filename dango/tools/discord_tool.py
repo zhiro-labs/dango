@@ -151,7 +151,9 @@ __all__ = [
     "get_discord_bot",
     "get_discord_interaction",
     "set_ephemeral",
+    "set_discord_response",
     "check_roles",
+    "check_permissions",
 ]
 
 
@@ -226,6 +228,54 @@ def get_discord_interaction(run_context: RunContext) -> "_discord.Interaction | 
     return state.get("_interaction")
 
 
+def set_discord_response(
+    run_context: RunContext,
+    embeds: "list[_discord.Embed] | None" = None,
+    suppress_text: bool = False,
+) -> None:
+    """Attach Discord embeds to the response, or suppress the LLM text output.
+
+    Args:
+        run_context: Agno RunContext injected by the framework.
+        embeds: List of ``discord.Embed`` objects to include in the response.
+        suppress_text: If True, the LLM's generated text is not sent to Discord.
+            Only the embeds (and any table images) are delivered.
+
+    Usage — embed output::
+
+        import discord
+        from dango.tools import discord_tool, RunContext, set_discord_response
+
+        @discord_tool(name="list_events")
+        async def list_events(run_context: RunContext) -> str:
+            embed = discord.Embed(title="Upcoming events", color=discord.Color.blurple())
+            embed.add_field(name="Concert", value="Saturday 19:00")
+            set_discord_response(run_context, embeds=[embed], suppress_text=True)
+            return ""
+
+    Usage — stateful multi-step UI (native ``discord.ui.View``)::
+
+        @discord_tool(name="open_event_form")
+        async def open_event_form(run_context: RunContext) -> str:
+            \"""Open the event creation form.\"""
+            bot = get_discord_bot(run_context)
+            ctx = get_discord_context(run_context)
+            channel = bot.get_channel(ctx["channel_id"])
+            # discord.ui.View manages its own state via Python callbacks;
+            # no Dango routing is needed for its buttons/selects.
+            view = EventView(...)
+            await channel.send("Configure your event:", view=view)
+            set_discord_response(run_context, suppress_text=True)
+            return ""
+    """
+    state = run_context.session_state
+    if state is not None:
+        state["_discord_response"] = {
+            "embeds": list(embeds) if embeds else [],
+            "suppress_text": suppress_text,
+        }
+
+
 def set_ephemeral(run_context: RunContext) -> None:
     """Mark the response as ephemeral (visible only to the invoking user).
 
@@ -241,6 +291,47 @@ def set_ephemeral(run_context: RunContext) -> None:
 # ---------------------------------------------------------------------------
 # Permission helpers
 # ---------------------------------------------------------------------------
+
+def check_permissions(
+    run_context: RunContext,
+    any_of: list[str] | None = None,
+    all_of: list[str] | None = None,
+) -> str | None:
+    """Return an error string if the author lacks required Discord guild permissions, else None.
+
+    Checks Discord's built-in permissions (e.g. ``manage_guild``, ``ban_members``),
+    NOT custom role names — use ``check_roles()`` for those.
+
+    Args:
+        run_context: Agno RunContext injected by the framework.
+        any_of: User must have at least one of these permission names.
+        all_of: User must have every one of these permission names.
+
+    Common names: ``administrator``, ``manage_guild``, ``manage_roles``,
+    ``manage_channels``, ``ban_members``, ``kick_members``, ``manage_messages``,
+    ``manage_nicknames``, ``moderate_members``.
+
+    Usage::
+
+        @discord_tool(name="set_timezone")
+        async def set_timezone(timezone: str, run_context: RunContext) -> str:
+            if err := check_permissions(run_context, any_of=["manage_guild"]):
+                return err
+            ...
+    """
+    state = run_context.session_state or {}
+    author_perms: set[str] = state.get("_author_permissions", set())
+
+    if any_of and not author_perms.intersection(any_of):
+        needed = " / ".join(any_of)
+        return f"❌ This command requires one of these permissions: {needed}"
+
+    if all_of and not set(all_of).issubset(author_perms):
+        missing = set(all_of) - author_perms
+        return f"❌ Missing required permissions: {', '.join(sorted(missing))}"
+
+    return None
+
 
 def check_roles(
     run_context: RunContext,

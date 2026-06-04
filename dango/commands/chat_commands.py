@@ -31,8 +31,10 @@ def _build_interaction_message_data(
     guild = interaction.guild
 
     author_roles: list[str] = []
+    author_permissions: set[str] = set()
     if guild and isinstance(author, discord.Member):
         author_roles = [r.name for r in author.roles if r.name != "@everyone"]
+        author_permissions = {p for p, v in author.guild_permissions if v}
 
     channel_name = ""
     if channel:
@@ -65,6 +67,7 @@ def _build_interaction_message_data(
         "author_id": int(author.id),
         "author_name": str(author.display_name),
         "author_roles": author_roles,
+        "author_permissions": author_permissions,
         "channel_id": int(channel.id) if channel else None,
         "channel_name": channel_name,
         "message_id": message_id,
@@ -102,10 +105,13 @@ def _build_message_data(message: discord.Message, bot_user_id: int) -> dict[str,
     guild_id = None
     guild_name = ""
     author_roles: list[str] = []
+    author_permissions: set[str] = set()
     if message.guild:
         guild_id = int(message.guild.id)
         guild_name = str(message.guild.name)
         author_roles = [r.name for r in message.author.roles if r.name != "@everyone"]
+        if isinstance(message.author, discord.Member):
+            author_permissions = {p for p, v in message.author.guild_permissions if v}
 
     return {
         "content": str(message.clean_content) if message.clean_content else "",
@@ -113,6 +119,7 @@ def _build_message_data(message: discord.Message, bot_user_id: int) -> dict[str,
         "author_id": author_id,
         "author_name": str(message.author.display_name),
         "author_roles": author_roles,
+        "author_permissions": author_permissions,
         "channel_id": channel_id,
         "channel_name": channel_name,
         "message_id": message_id,
@@ -408,6 +415,11 @@ class ChatCog(commands.Cog):
                 if interaction.guild and isinstance(author, discord.Member)
                 else []
             )
+            author_permissions = (
+                {p for p, v in author.guild_permissions if v}
+                if interaction.guild and isinstance(author, discord.Member)
+                else set()
+            )
 
             message_data = {
                 "content": message,
@@ -415,6 +427,7 @@ class ChatCog(commands.Cog):
                 "author_id": author.id,
                 "author_name": author.display_name,
                 "author_roles": author_roles,
+                "author_permissions": author_permissions,
                 "channel_id": channel.id,
                 "channel_name": channel_name,
                 "message_id": sent.id,
