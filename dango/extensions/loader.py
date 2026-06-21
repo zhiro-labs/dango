@@ -108,6 +108,12 @@ def _make_tool_wrapper(spec: ExtensionSpec) -> Callable:
     if "return" in hints:
         annotations["return"] = hints["return"]
     wrapper.__annotations__ = annotations
+    # Py3.14 (PEP 649): functools.update_wrapper copies __annotate__, not
+    # __annotations__. Agno's @tool wraps this callable again via update_wrapper;
+    # without __annotate__ the re-wrapped entrypoint loses its annotations while
+    # keeping __signature__, and pydantic's validate_call then raises KeyError on
+    # the first param. Set __annotate__ so the annotations survive re-wrapping.
+    wrapper.__annotate__ = lambda _format, _ann=annotations: dict(_ann)
     return wrapper
 
 

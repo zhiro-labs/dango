@@ -127,6 +127,26 @@ class TestToolWrapper:
         assert params == ["x", "n"]
         assert "ctx" not in wrapper.__annotations__
 
+    def test_wrapper_annotations_survive_update_wrapper(self):
+        # Agno's @tool re-wraps our callable via functools.update_wrapper. On
+        # Python 3.14 (PEP 649) update_wrapper copies __annotate__, not
+        # __annotations__, so the wrapper must expose __annotate__ or the
+        # re-wrapped entrypoint loses its hints and pydantic's validate_call
+        # raises KeyError on the first param. Guard against that regression.
+        import functools
+
+        @agent_tool()
+        def f(ctx, x: str, n: int = 1):
+            return f"{x}*{n}"
+
+        wrapper = _make_tool_wrapper(tool_specs()[0])
+
+        def outer(*args, **kwargs):
+            return wrapper(*args, **kwargs)
+
+        functools.update_wrapper(outer, wrapper)
+        assert outer.__annotations__ == {"x": str, "n": int}
+
     def test_wrapper_injects_ctx_at_call_time(self):
         @agent_tool()
         def f(ctx, x: str):
