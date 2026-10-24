@@ -9,18 +9,23 @@ description = "Discord AI Agent"
 requires-python = ">=3.12"
 dependencies = [
     "agno[anthropic,aws-bedrock,azure,cerebras,cohere,google,groq,ibm,litellm,ollama,openai,portkey]>=2.6.9",
+    "aiohttp>=3.13.5",
     "beautifulsoup4>=4.14.3",
     "ddgs>=9.14.4",
     "discord-py>=2.6.0",
     "fastapi>=0.136.3",
+    "httpx>=0.28.1",
     "jinja2>=3.1.6",
     "pillow>=11.3.0",
     "psycopg2-binary>=2.9.12",
+    "pydantic>=2.13.4",
     "pymysql>=1.2.0",
     "python-dotenv>=1.1.1",
+    "python-multipart>=0.0.30",
     "pyyaml>=6.0.2",
     "requests>=2.32.5",
     "sqlalchemy>=2.0.50",
+    "starlette>=1.2.1",
     "tzdata>=2025.2",
     "uvicorn>=0.48.0",
 ]

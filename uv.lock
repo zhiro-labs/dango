@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -746,18 +746,23 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "agno", extra = ["anthropic", "aws-bedrock", "azure", "cerebras", "cohere", "google", "groq", "ibm", "litellm", "ollama", "openai", "portkey"] },
+    { name = "aiohttp" },
     { name = "beautifulsoup4" },
     { name = "ddgs" },
     { name = "discord-py" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "jinja2" },
     { name = "pillow" },
     { name = "psycopg2-binary" },
+    { name = "pydantic" },
     { name = "pymysql" },
     { name = "python-dotenv" },
+    { name = "python-multipart" },
     { name = "pyyaml" },
     { name = "requests" },
     { name = "sqlalchemy" },
+    { name = "starlette" },
     { name = "tzdata" },
     { name = "uvicorn" },
 ]
@@ -770,18 +775,23 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "agno", extras = ["anthropic", "aws-bedrock", "azure", "cerebras", "cohere", "google", "groq", "ibm", "litellm", "ollama", "openai", "portkey"], specifier = ">=2.6.9" },
+    { name = "aiohttp", specifier = ">=3.13.5" },
     { name = "beautifulsoup4", specifier = ">=4.14.3" },
     { name = "ddgs", specifier = ">=9.14.4" },
     { name = "discord-py", specifier = ">=2.6.0" },
     { name = "fastapi", specifier = ">=0.136.3" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "pillow", specifier = ">=11.3.0" },
     { name = "psycopg2-binary", specifier = ">=2.9.12" },
+    { name = "pydantic", specifier = ">=2.13.4" },
     { name = "pymysql", specifier = ">=1.2.0" },
     { name = "python-dotenv", specifier = ">=1.1.1" },
+    { name = "python-multipart", specifier = ">=0.0.30" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "requests", specifier = ">=2.32.5" },
     { name = "sqlalchemy", specifier = ">=2.0.50" },
+    { name = "starlette", specifier = ">=1.2.1" },
     { name = "tzdata", specifier = ">=2025.2" },
     { name = "uvicorn", specifier = ">=0.48.0" },
 ]
