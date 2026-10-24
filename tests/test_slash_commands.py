@@ -245,9 +245,86 @@ class TestSkill:
         skill(cog, interaction)
         interaction.followup.send.assert_awaited_once_with("Failed to process skill request.", ephemeral=True)
 
+    def test_autocomplete_is_registered(self):
+        assert ChatCog.skill_command.get_parameter("name").autocomplete
+
     def test_autocomplete(self, cog, monkeypatch):
         names = [f"skill-{i}" for i in range(30)] + ["Demo-Skill"]
         monkeypatch.setattr(chat_commands, "list_skill_names", lambda: names)
         choices = asyncio.run(cog._skill_name_autocomplete(_interaction(), "DEMO"))
         assert [(c.name, c.value) for c in choices] == [("Demo-Skill", "Demo-Skill")]
         assert len(asyncio.run(cog._skill_name_autocomplete(_interaction(), "skill"))) == 25
+
+
+# ── Same context as plain messages ────────────────────────────────────────────
+
+def _guild_message(author, guild):
+    """A plain guild message from `author`, as on_message would receive it."""
+    return SimpleNamespace(
+        author=author,
+        channel=SimpleNamespace(id=222, name="general"),
+        guild=guild,
+        id=4001,
+        clean_content="hello there",
+        embeds=[],
+        attachments=[],
+        stickers=[],
+        mentions=[],
+        role_mentions=[],
+        created_at=_iso("2026-10-24T08:00:00+00:00"),
+        type="default",
+    )
+
+
+class TestSameContextAsMessages:
+    """Slash turns must give the workflow and custom tools the same context."""
+
+    def test_same_fields_as_a_plain_message(self, cog):
+        from dango.commands.chat_commands import _build_message_data
+
+        interaction = _interaction()
+        deep(cog, interaction)
+        slash = {k for k in _message_data(cog) if not k.startswith("_")}
+        plain = set(_build_message_data(_guild_message(interaction.user, interaction.guild), BOT_ID))
+        assert slash == plain
+
+    @pytest.mark.parametrize("run", [deep, skill])
+    def test_roles_and_permissions_reach_tools(self, cog, run):
+        run(cog, _interaction())
+        data = _message_data(cog)
+        assert data["author_roles"] == ["Mods"]
+        assert data["author_permissions"] == ["administrator", "send_messages"]
+        assert data["stickers"] == []
+
+    def test_typed_mentions_are_resolved(self, cog):
+        interaction = _interaction()
+        deep(cog, interaction, message="<@5> meet <@&7> and <@!5>, not <@42>")
+
+        data = _message_data(cog)
+        assert data["content"] == "@Bob meet @Helpers and @Bob, not <@42>"
+        assert data["mentioned_users"] == [{"id": 5, "name": "Bob"}]
+        assert data["mentioned_roles"] == [{"id": 7, "name": "Helpers"}]
+        # The bot's post and its JSON keep the text as typed, so Discord renders the mentions.
+        content, files = _posted(interaction)
+        assert content.endswith("<@5> meet <@&7> and <@!5>, not <@42>")
+        assert json.loads(files[0][1])["content"] == "<@5> meet <@&7> and <@!5>, not <@42>"
+
+    def test_dm(self, cog):
+        interaction = _interaction(text_guild=False)
+        interaction.channel = SimpleNamespace(id=222, send=interaction.channel.send)  # DM channels have no name
+        deep(cog, interaction, message="<@5> hi")
+
+        data = _message_data(cog)
+        assert (data["channel_name"], data["guild_id"], data["guild_name"]) == ("DM", None, "")
+        assert (data["author_roles"], data["author_permissions"]) == ([], [])
+        assert (data["content"], data["mentioned_users"]) == ("<@5> hi", [])
+
+
+def test_webhook_author_in_guild_has_no_roles():
+    """Webhook messages have a plain User author (no roles) even in a guild."""
+    from dango.commands.chat_commands import _build_message_data
+
+    webhook = SimpleNamespace(id=1, display_name="GitHub")
+    data = _build_message_data(_guild_message(webhook, SimpleNamespace(id=333, name="Dango HQ")), BOT_ID)
+    assert (data["author_roles"], data["author_permissions"]) == ([], [])
+    assert (data["guild_id"], data["channel_name"]) == (333, "general")

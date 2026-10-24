@@ -4,6 +4,7 @@ import asyncio
 import io
 import json
 import os
+import re
 import time
 from datetime import datetime
 from typing import Any
@@ -15,7 +16,7 @@ from discord.ext import commands
 
 from ..agent import get_agents, list_skill_names
 from ..utils.config_utils import env_onoff_to_bool
-from ..utils.discord_helpers import format_reply_context
+from ..utils.discord_helpers import ROLE_MENTION_RE, USER_MENTION_RE, format_reply_context
 
 
 # ── Message batching ──────────────────────────────────────────────────────────
@@ -53,16 +54,17 @@ def _embed_dicts(message: discord.Message) -> list[dict]:
     return embeds
 
 
+def _attachment_dict(a: discord.Attachment) -> dict:
+    return {
+        "filename": str(a.filename),
+        "url": str(a.url),
+        "size": int(a.size),
+        "content_type": str(a.content_type) if a.content_type else "",
+    }
+
+
 def _attachment_dicts(message: discord.Message) -> list[dict]:
-    return [
-        {
-            "filename": str(a.filename),
-            "url": str(a.url),
-            "size": int(a.size),
-            "content_type": str(a.content_type) if a.content_type else "",
-        }
-        for a in message.attachments
-    ] if message.attachments else []
+    return [_attachment_dict(a) for a in message.attachments] if message.attachments else []
 
 
 def _sticker_dicts(message: discord.Message) -> list[dict]:
@@ -79,39 +81,44 @@ def _sticker_dicts(message: discord.Message) -> list[dict]:
     ] if message.stickers else []
 
 
-def _build_message_data(message: discord.Message, bot_user_id: int) -> dict[str, Any]:
-    author_id = int(message.author.id)
-    channel_id = int(message.channel.id)
-    message_id = int(message.id)
+# ── message_data ──────────────────────────────────────────────────────────────
+# Every entry point (plain messages, /deep, /skill) builds the same shape, so
+# the workflow and custom tools (via Ctx) see the same context either way.
 
-    embeds = _embed_dicts(message)
-
-    channel_name = ""
-    if hasattr(message.channel, "name") and message.channel.name:
-        channel_name = str(message.channel.name)
-    elif isinstance(message.channel, discord.DMChannel):
-        channel_name = "DM"
-
-    guild_id = None
-    guild_name = ""
-    author_roles: list[str] = []
-    author_permissions: list[str] = []
-    if message.guild:
-        guild_id = int(message.guild.id)
-        guild_name = str(message.guild.name)
-        author_roles = [r.name for r in message.author.roles if r.name != "@everyone"]
+def _author_fields(author, guild) -> dict[str, Any]:
+    """Who sent it. Roles and permissions exist only for guild members
+    (webhook authors and DM users have neither)."""
+    roles: list[str] = []
+    permissions: list[str] = []
+    if guild is not None and hasattr(author, "guild_permissions"):
+        roles = [r.name for r in author.roles if r.name != "@everyone"]
         # guild_permissions is a Permissions object; iterating yields (name, value).
-        author_permissions = [
-            name for name, value in message.author.guild_permissions if value
-        ]
+        permissions = [name for name, value in author.guild_permissions if value]
+    return {
+        "author_id": int(author.id),
+        "author_name": str(author.display_name),
+        "author_roles": roles,
+        "author_permissions": permissions,
+    }
 
+
+def _channel_fields(channel, guild) -> dict[str, Any]:
+    name = getattr(channel, "name", None)
+    return {
+        "channel_id": int(channel.id),
+        "channel_name": str(name) if name else ("DM" if guild is None else ""),
+        "guild_id": int(guild.id) if guild else None,
+        "guild_name": str(guild.name) if guild else "",
+        "is_dm": isinstance(channel, discord.DMChannel),
+    }
+
+
+def _build_message_data(message: discord.Message, bot_user_id: int) -> dict[str, Any]:
+    embeds = _embed_dicts(message)
     return {
         "content": str(message.clean_content) if message.clean_content else "",
         "embeds": embeds,
-        "author_id": author_id,
-        "author_name": str(message.author.display_name),
-        "author_roles": author_roles,
-        "author_permissions": author_permissions,
+        **_author_fields(message.author, message.guild),
         # Precise IDs for members/roles the message tagged, so tools don't have
         # to fuzzy-match names. role_mentions is empty outside guilds.
         "mentioned_users": [
@@ -120,20 +127,97 @@ def _build_message_data(message: discord.Message, bot_user_id: int) -> dict[str,
         "mentioned_roles": [
             {"id": int(r.id), "name": str(r.name)} for r in message.role_mentions
         ],
-        "channel_id": channel_id,
-        "channel_name": channel_name,
-        "message_id": message_id,
+        **_channel_fields(message.channel, message.guild),
+        "message_id": int(message.id),
         "bot_user_id": int(bot_user_id),
-        "guild_id": guild_id,
-        "guild_name": guild_name,
         "timestamp": datetime.now().isoformat(),
         "created_at": message.created_at.isoformat(),
-        "is_dm": isinstance(message.channel, discord.DMChannel),
         "has_embeds": len(embeds) > 0,
         "message_type": str(message.type),
         "attachments": _attachment_dicts(message),
         "stickers": _sticker_dicts(message),
     }
+
+
+def _typed_mentions(text: str, guild) -> tuple[str, list[dict], list[dict]]:
+    """Resolve <@id> / <@&id> tokens typed into a slash-command option.
+
+    Slash commands get raw text, not a Message, so this stands in for
+    clean_content / mentions / role_mentions. Tokens the guild cache cannot
+    resolve are left as typed.
+    """
+    users: list[dict] = []
+    roles: list[dict] = []
+    if guild is None:
+        return text, users, roles
+
+    def user(match: re.Match) -> str:
+        member = guild.get_member(int(match.group(1)))
+        if member is None:
+            return match.group(0)
+        entry = {"id": int(member.id), "name": str(member.display_name)}
+        if entry not in users:
+            users.append(entry)
+        return f"@{member.display_name}"
+
+    def role(match: re.Match) -> str:
+        found = guild.get_role(int(match.group(1)))
+        if found is None:
+            return match.group(0)
+        entry = {"id": int(found.id), "name": str(found.name)}
+        if entry not in roles:
+            roles.append(entry)
+        return f"@{found.name}"
+
+    text = USER_MENTION_RE.sub(user, text)
+    text = ROLE_MENTION_RE.sub(role, text)
+    return text, users, roles
+
+
+def _is_image(attachment: discord.Attachment | None) -> bool:
+    return bool(attachment and attachment.content_type and attachment.content_type.startswith("image/"))
+
+
+def _build_slash_message_data(
+    interaction: discord.Interaction,
+    sent: discord.Message,
+    text: str,
+    image: discord.Attachment | None,
+    bot_user_id: int,
+) -> dict[str, Any]:
+    """message_data for a slash command whose text the bot posted as `sent`.
+
+    message_id is the bot's post, so history is read from before it.
+    """
+    content, mentioned_users, mentioned_roles = _typed_mentions(text, interaction.guild)
+    return {
+        "content": content,
+        "embeds": [],
+        **_author_fields(interaction.user, interaction.guild),
+        "mentioned_users": mentioned_users,
+        "mentioned_roles": mentioned_roles,
+        **_channel_fields(interaction.channel, interaction.guild),
+        "message_id": int(sent.id),
+        "bot_user_id": int(bot_user_id),
+        "timestamp": datetime.now().isoformat(),
+        "created_at": sent.created_at.isoformat(),
+        "has_embeds": False,
+        "message_type": "default",
+        "attachments": [_attachment_dict(image)] if _is_image(image) else [],
+        "stickers": [],
+    }
+
+
+async def _reupload(image: discord.Attachment, log_tag: str) -> discord.File | None:
+    """Download an attachment so the bot can post it again; None on failure."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image.url) as resp:
+                if resp.status == 200:
+                    return discord.File(io.BytesIO(await resp.read()), filename=image.filename)
+    except Exception as e:
+        print(f"⚠️ [{log_tag}] Failed to re-upload image: {e}")
+    return None
 
 
 def _merge_burst_messages(
@@ -310,12 +394,7 @@ class ChatCog(commands.Cog):
                     except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
                         print(f"⚠️ [on_message] Could not fetch reference message: {e}")
 
-                message_data["_bot"] = self.bot
-                message_data["_chat_sys_prompt"] = self.chat_system_prompt
-                message_data["_history_limit"] = self.runtime_config.history_limit
-                message_data["_timezone"] = self.runtime_config.timezone
-
-                await self.discord_workflow.arun(input=message_data)
+                await self.discord_workflow.arun(input=self._with_runtime_context(message_data))
                 print("✅ [on_message] Workflow completed successfully")
 
             except Exception as e:
@@ -328,6 +407,66 @@ class ChatCog(commands.Cog):
                     )
                 except Exception as send_error:
                     print(f"❌ [on_message] Failed to send error message: {send_error}")
+
+    def _with_runtime_context(self, message_data: dict[str, Any]) -> dict[str, Any]:
+        """Add the bot and current runtime settings the workflow steps need."""
+        message_data["_bot"] = self.bot
+        message_data["_chat_sys_prompt"] = self.chat_system_prompt
+        message_data["_history_limit"] = self.runtime_config.history_limit
+        message_data["_timezone"] = self.runtime_config.timezone
+        return message_data
+
+    async def _run_slash_turn(
+        self,
+        interaction: discord.Interaction,
+        text: str,
+        image: discord.Attachment | None,
+        *,
+        kind: str,
+        label: str,
+        flags: dict[str, Any],
+        failure: str,
+    ) -> None:
+        """Post a slash command's text as the bot, then answer it like a message.
+
+        Slash-command input is invisible to the channel, so the bot posts it
+        ("> **[label]** **Author:** text") with a dango_<kind>_<author id>.json
+        attachment; fetch_history uses that file to restore the post as the
+        author's own turn in later history.
+        """
+        try:
+            await interaction.response.defer(ephemeral=True)
+            author = interaction.user
+
+            info = {"author_name": author.display_name, "author_id": author.id, "content": text}
+            files = [
+                discord.File(
+                    io.BytesIO(json.dumps(info, ensure_ascii=False).encode()),
+                    filename=f"dango_{kind}_{author.id}.json",
+                )
+            ]
+            if _is_image(image):
+                reupload = await _reupload(image, log_tag=kind)
+                if reupload:
+                    files.append(reupload)
+
+            sent = await interaction.channel.send(
+                content=f"> **[{label}]** **{author.display_name}:** {text}",
+                files=files,
+            )
+
+            message_data = _build_slash_message_data(interaction, sent, text, image, self.bot.user.id)
+            message_data.update(flags)
+            await self.discord_workflow.arun(input=self._with_runtime_context(message_data))
+            await interaction.followup.send("✅", ephemeral=True)
+            print(f"✅ [{kind}] Processed {label} request from {author.display_name}")
+
+        except Exception as e:
+            print(f"❌ [{kind}] Error: {e}")
+            try:
+                await interaction.followup.send(failure, ephemeral=True)
+            except Exception:
+                pass
 
     @app_commands.command(
         name="newchat", description="Start a new chat session by sending a marker"
@@ -358,103 +497,17 @@ class ChatCog(commands.Cog):
         message: str,
         image: discord.Attachment = None,
     ):
-        try:
-            if get_agents().deep is None:
-                await interaction.response.send_message(
-                    "❌ `DEEP_MODEL` is not configured — `/deep` is unavailable.",
-                    ephemeral=True,
-                )
-                return
-
-            await interaction.response.defer(ephemeral=True)
-
-            channel = interaction.channel
-            author = interaction.user
-
-            deep_info = {
-                "author_name": author.display_name,
-                "author_id": author.id,
-                "content": message,
-            }
-            files = [
-                discord.File(
-                    io.BytesIO(json.dumps(deep_info, ensure_ascii=False).encode()),
-                    filename=f"dango_deep_{author.id}.json",
-                )
-            ]
-
-            if image and image.content_type and image.content_type.startswith("image/"):
-                try:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(image.url) as resp:
-                            if resp.status == 200:
-                                files.append(
-                                    discord.File(
-                                        io.BytesIO(await resp.read()),
-                                        filename=image.filename,
-                                    )
-                                )
-                except Exception as e:
-                    print(f"⚠️ [deep] Failed to re-upload image: {e}")
-
-            sent = await channel.send(
-                content=f"> **[deep]** **{author.display_name}:** {message}",
-                files=files,
+        if get_agents().deep is None:
+            await interaction.response.send_message(
+                "❌ `DEEP_MODEL` is not configured — `/deep` is unavailable.",
+                ephemeral=True,
             )
-
-            channel_name = channel.name if hasattr(channel, "name") else "DM"
-            guild_id = interaction.guild.id if interaction.guild else None
-            guild_name = interaction.guild.name if interaction.guild else ""
-            author_roles = (
-                [r.name for r in author.roles if r.name != "@everyone"]
-                if interaction.guild and isinstance(author, discord.Member)
-                else []
-            )
-
-            message_data = {
-                "content": message,
-                "embeds": [],
-                "author_id": author.id,
-                "author_name": author.display_name,
-                "author_roles": author_roles,
-                "channel_id": channel.id,
-                "channel_name": channel_name,
-                "message_id": sent.id,
-                "bot_user_id": self.bot.user.id,
-                "guild_id": guild_id,
-                "guild_name": guild_name,
-                "timestamp": datetime.now().isoformat(),
-                "created_at": sent.created_at.isoformat(),
-                "is_dm": isinstance(channel, discord.DMChannel),
-                "has_embeds": False,
-                "message_type": "default",
-                "attachments": [
-                    {
-                        "filename": image.filename,
-                        "url": image.url,
-                        "size": image.size,
-                        "content_type": image.content_type or "",
-                    }
-                ] if image and image.content_type and image.content_type.startswith("image/") else [],
-                "_bot": self.bot,
-                "_chat_sys_prompt": self.chat_system_prompt,
-                "_history_limit": self.runtime_config.history_limit,
-                "_timezone": self.runtime_config.timezone,
-                "_force_deep": True,
-            }
-
-            await self.discord_workflow.arun(input=message_data)
-            await interaction.followup.send("✅", ephemeral=True)
-            print(f"✅ [deep] Processed request from {author.display_name}")
-
-        except Exception as e:
-            print(f"❌ [deep] Error: {e}")
-            try:
-                await interaction.followup.send(
-                    "Failed to process deep model request.", ephemeral=True
-                )
-            except Exception:
-                pass
+            return
+        await self._run_slash_turn(
+            interaction, message, image,
+            kind="deep", label="deep", flags={"_force_deep": True},
+            failure="Failed to process deep model request.",
+        )
 
     @app_commands.command(
         name="skill",
@@ -472,112 +525,26 @@ class ChatCog(commands.Cog):
         message: str,
         image: discord.Attachment = None,
     ):
-        try:
-            available = list_skill_names()
-            if not available:
-                await interaction.response.send_message(
-                    "❌ No skills are available — enable skills and add at least one "
-                    "to use `/skill`.",
-                    ephemeral=True,
-                )
-                return
-            if name not in available:
-                await interaction.response.send_message(
-                    f"❌ Unknown skill `{name}`. Available: "
-                    + ", ".join(f"`{n}`" for n in available),
-                    ephemeral=True,
-                )
-                return
-
-            await interaction.response.defer(ephemeral=True)
-
-            channel = interaction.channel
-            author = interaction.user
-
-            skill_info = {
-                "author_name": author.display_name,
-                "author_id": author.id,
-                "content": message,
-            }
-            files = [
-                discord.File(
-                    io.BytesIO(json.dumps(skill_info, ensure_ascii=False).encode()),
-                    filename=f"dango_skill_{author.id}.json",
-                )
-            ]
-
-            if image and image.content_type and image.content_type.startswith("image/"):
-                try:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(image.url) as resp:
-                            if resp.status == 200:
-                                files.append(
-                                    discord.File(
-                                        io.BytesIO(await resp.read()),
-                                        filename=image.filename,
-                                    )
-                                )
-                except Exception as e:
-                    print(f"⚠️ [skill] Failed to re-upload image: {e}")
-
-            sent = await channel.send(
-                content=f"> **[skill: {name}]** **{author.display_name}:** {message}",
-                files=files,
+        available = list_skill_names()
+        if not available:
+            await interaction.response.send_message(
+                "❌ No skills are available — enable skills and add at least one "
+                "to use `/skill`.",
+                ephemeral=True,
             )
-
-            channel_name = channel.name if hasattr(channel, "name") else "DM"
-            guild_id = interaction.guild.id if interaction.guild else None
-            guild_name = interaction.guild.name if interaction.guild else ""
-            author_roles = (
-                [r.name for r in author.roles if r.name != "@everyone"]
-                if interaction.guild and isinstance(author, discord.Member)
-                else []
+            return
+        if name not in available:
+            await interaction.response.send_message(
+                f"❌ Unknown skill `{name}`. Available: "
+                + ", ".join(f"`{n}`" for n in available),
+                ephemeral=True,
             )
-
-            message_data = {
-                "content": message,
-                "embeds": [],
-                "author_id": author.id,
-                "author_name": author.display_name,
-                "author_roles": author_roles,
-                "channel_id": channel.id,
-                "channel_name": channel_name,
-                "message_id": sent.id,
-                "bot_user_id": self.bot.user.id,
-                "guild_id": guild_id,
-                "guild_name": guild_name,
-                "timestamp": datetime.now().isoformat(),
-                "created_at": sent.created_at.isoformat(),
-                "is_dm": isinstance(channel, discord.DMChannel),
-                "has_embeds": False,
-                "message_type": "default",
-                "attachments": [
-                    {
-                        "filename": image.filename,
-                        "url": image.url,
-                        "size": image.size,
-                        "content_type": image.content_type or "",
-                    }
-                ] if image and image.content_type and image.content_type.startswith("image/") else [],
-                "_bot": self.bot,
-                "_chat_sys_prompt": self.chat_system_prompt,
-                "_history_limit": self.runtime_config.history_limit,
-                "_timezone": self.runtime_config.timezone,
-                "_force_skill": name,
-            }
-
-            await self.discord_workflow.arun(input=message_data)
-            await interaction.followup.send("✅", ephemeral=True)
-            print(f"✅ [skill] Processed '{name}' request from {author.display_name}")
-
-        except Exception as e:
-            print(f"❌ [skill] Error: {e}")
-            try:
-                await interaction.followup.send(
-                    "Failed to process skill request.", ephemeral=True
-                )
-            except Exception:
-                pass
+            return
+        await self._run_slash_turn(
+            interaction, message, image,
+            kind="skill", label=f"skill: {name}", flags={"_force_skill": name},
+            failure="Failed to process skill request.",
+        )
 
     @skill_command.autocomplete("name")
     async def _skill_name_autocomplete(
