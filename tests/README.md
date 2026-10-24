@@ -16,8 +16,9 @@ uv run pytest tests/test_flows.py -v
 uv run pytest tests/test_flows.py -k deep_round_trip -v
 ```
 
-Tests are not run by CI yet (the GitHub workflows only build the Docker
-image and the docs), so run them before committing.
+GitHub Actions runs the whole suite on every push to `main` and on every pull
+request (`.github/workflows/test.yml`), with the same `uv sync --frozen` +
+`uv run --frozen pytest` steps you can run locally.
 
 ## End-to-end flows
 
