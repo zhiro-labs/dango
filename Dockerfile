@@ -1,6 +1,8 @@
 FROM python:3.12-slim
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# Same uv version as CI (.github/workflows/test.yml) and the one that wrote
+# uv.lock, so `uv sync --frozen` reads the lockfile the same way everywhere.
+COPY --from=ghcr.io/astral-sh/uv:0.13.5 /uv /uvx /bin/
 
 WORKDIR /app
 
