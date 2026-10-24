@@ -665,20 +665,20 @@ class TestFailureReplies:
         assert phrase in out["error_message"]
         assert out["error_message"].endswith(f"\n> {error.message}")
 
-    @pytest.mark.parametrize("error, phrase", [
+    @pytest.mark.parametrize("error, phrase, attempts", [
         (_provider_error("Incorrect API key provided: sk-abc***xyz.", 401),
-         "rejected the API key or denied access"),
+         "rejected the API key or denied access", 1),
         (_provider_error("You exceeded your current quota, please check your plan.", 429),
-         "rate limit or quota has been reached"),
+         "rate limit or quota has been reached", 3),
         (_provider_error("The model `gpt-9` does not exist or you do not have access to it.", 404),
-         "configured model was not found"),
+         "configured model was not found", 1),
         (_provider_error("Connection error.", 502, cause=httpx.ConnectError("connection refused")),
-         "Could not reach the model provider"),
+         "Could not reach the model provider", 3),
     ])
-    def test_openai_errors(self, runs, error, phrase):
-        runs.queue = [error, error, error]  # non-Gemini: three attempts
+    def test_openai_errors(self, runs, error, phrase, attempts):
+        runs.queue = [error, error, error]
         out = run_step(OPENAI_FAST)
-        assert len(runs.calls) == 3
+        assert len(runs.calls) == attempts
         assert phrase in out["error_message"]
 
     def test_context_window_exceeded(self, runs):
@@ -695,8 +695,9 @@ class TestFailureReplies:
         assert "(google:gemini-2.5-flash and google:gemini-2.5-pro)" in out["error_message"]
 
     def test_only_the_final_attempt_counts(self, runs):
-        runs.queue = [_provider_error("Incorrect API key provided.", 401), _err("boom"), _err("boom")]
+        runs.queue = [_provider_error(GEMINI_503, 503), _err("boom"), _err("boom")]
         out = run_step(OPENAI_FAST)
+        assert len(runs.calls) == 3
         # The final attempt failed without a provider exception: classified by its text.
         assert out["error_message"] == (
             "> [dango-sysinfo]\n> ⚠️ The model returned an error (openai:gpt-4o). Please try again later.\n> boom"
@@ -719,3 +720,56 @@ class TestFailureReplies:
         runs.queue = [_err(content)]
         out = run_step(BASE_ENV)
         assert phrase in out["error_message"]
+
+
+class TestRetryDecisions:
+    """Non-Gemini models retry only failures a retry could fix."""
+
+    @pytest.mark.parametrize("error", [
+        _provider_error("Incorrect API key provided.", 401),
+        _provider_error("400 INVALID_ARGUMENT. API key not valid.", 400),
+        _provider_error("The model `gpt-9` does not exist.", 404),
+        _provider_error("This model's maximum context length is 128000 tokens.", 400),
+        _provider_error("Invalid 'messages[1].role'", 422),
+    ])
+    def test_unfixable_errors_are_not_retried(self, runs, error):
+        runs.queue = [error, _ok("would have worked")]
+        out = run_step(OPENAI_FAST)
+        assert len(runs.calls) == 1
+        assert runs.sleeps == []
+        assert out["error"] is True
+
+    @pytest.mark.parametrize("error", [
+        _provider_error(GEMINI_503, 503),
+        _provider_error("You exceeded your current quota.", 429),
+        _provider_error("Connection error.", 502, cause=httpx.ConnectError("refused")),
+        _provider_error("something odd", 502),
+    ])
+    def test_transient_errors_are_retried(self, runs, error):
+        runs.queue = [error, _ok("second time")]
+        out = run_step(OPENAI_FAST)
+        assert len(runs.calls) == 2
+        assert runs.sleeps == [1]
+        assert out["llm_response"] == "second time"
+
+    def test_text_only_failure_is_judged_by_its_text(self, runs):
+        runs.queue = [_err("Incorrect API key provided."), _ok("would have worked")]
+        run_step(OPENAI_FAST)
+        assert len(runs.calls) == 1
+
+    def test_retry_stops_once_an_unfixable_error_appears(self, runs):
+        runs.queue = [_provider_error(GEMINI_503, 503), _provider_error("Incorrect API key provided.", 401)]
+        out = run_step(OPENAI_FAST)
+        assert len(runs.calls) == 2
+        assert runs.sleeps == [1]
+        assert "rejected the API key or denied access" in out["error_message"]
+
+    def test_unfixable_error_goes_straight_to_fallback(self, runs):
+        runs.queue = [_provider_error("Incorrect API key provided.", 401), _ok("from deep")]
+        out = run_step({**OPENAI_FAST, **DEEP_GEMINI, "FALLBACK_ON_ERROR": "on"})
+        assert _model_ids(runs) == ["gpt-4o", "gemini-2.5-pro"]
+        assert runs.sleeps == []
+        assert out["llm_response"] == "from deep"
+        assert out["fallback_sysinfo"] == (
+            "> [dango-sysinfo]\n> ⚡ openai:gpt-4o failed — response served by google:gemini-2.5-pro."
+        )

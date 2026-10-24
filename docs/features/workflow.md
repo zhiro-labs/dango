@@ -43,7 +43,7 @@ Runs the Agno Agent against the formatted history plus the current message. Key 
 - Resolves `@mention` tokens in message content using the `mention_map`
 - Downloads image attachments and passes them to the model
 - Trims history to `CONTEXT_TOKEN_BUDGET` before sending
-- Handles retries (Gemini: model-level; others: 2× at agent level) and bidirectional fallback
+- Handles retries (Gemini: model-level; others: 2× at agent level, skipped for errors a retry cannot fix such as a bad API key) and bidirectional fallback
 
 The Agno `Agent` uses a dynamic `instructions` callback that reads `session_state` on every call, injecting the user's display name and current time into the system prompt when `ENABLE_CONTEXTUAL_SYSTEM_PROMPT=on`.
 

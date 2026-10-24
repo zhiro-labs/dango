@@ -9,13 +9,22 @@ from typing import Any
 from agno.agent import Agent
 from agno.run.base import RunStatus
 
-from .errors import capture_provider_errors
+from .errors import FailureKind, capture_provider_errors, classify_failure
 from .models import DangoGemini
 from .registry import Agents
 from .routing import Route
 from .settings import ModelSpec
 
 _NON_GEMINI_RETRIES = 2  # mirrors DangoGemini's default model-level retries
+
+# Failures the same request would hit again: retrying only delays the
+# fallback or the error reply.
+_NOT_RETRYABLE = frozenset({
+    FailureKind.AUTH,
+    FailureKind.MODEL_NOT_FOUND,
+    FailureKind.CONTEXT_TOO_LONG,
+    FailureKind.BAD_REQUEST,
+})
 
 
 @dataclass(frozen=True)
@@ -33,7 +42,9 @@ async def run_with_retry(agent: Agent, messages: list, session_state: dict) -> t
     """Run agent.arun with retry for non-Gemini providers.
 
     DangoGemini already retries at model level (retries=2, exponential_backoff).
-    All other providers have no built-in retry in Agno, so we add one here.
+    All other providers have no built-in retry in Agno, so we add one here,
+    skipping failures a retry cannot fix (bad key, unknown model, context too
+    long, rejected request).
     Returns (response, provider exception of the failed final attempt or None).
     """
     is_gemini = isinstance(getattr(agent, "model", None), DangoGemini)
@@ -46,6 +57,10 @@ async def run_with_retry(agent: Agent, messages: list, session_state: dict) -> t
         failed = response.status == RunStatus.error
         error = errors[-1] if failed and errors else None
         if not failed or attempt == attempts - 1:
+            break
+        kind = classify_failure(error, response.content)
+        if kind in _NOT_RETRYABLE:
+            print(f"⚡ [arun] non-Gemini error on attempt {attempt + 1} is not retryable ({kind.value})")
             break
         delay = 2 ** attempt  # 1 s, 2 s
         print(f"⚡ [arun] non-Gemini error on attempt {attempt + 1}/{attempts - 1}, retrying in {delay}s")

@@ -94,7 +94,7 @@ Works best when fast and deep use **different providers** — same-provider fall
 ⚠️  [config] FAST_MODEL and DEEP_MODEL share provider 'google' — FALLBACK_ON_ERROR won't protect against provider-wide outages.
 ```
 
-Non-Gemini providers retry 2× before triggering fallback. Gemini handles its own retries internally.
+Non-Gemini providers retry 2× before triggering fallback, except for errors a retry cannot fix — a rejected API key, an unknown model name, a conversation longer than the context window, or another rejected request — which go straight to fallback (or to the [error reply](../troubleshooting.md#the-bot-replies-with-a-model-error)). Gemini handles its own retries internally.
 
 ## Local models
 

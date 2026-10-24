@@ -107,7 +107,7 @@ This message is visible to users but is stripped from LLM history so it does not
 
 ---
 
-## The bot replies with a ⚠️ model error
+## The bot replies with a ⚠️ model error {#the-bot-replies-with-a-model-error}
 
 When every model it tried has failed, Dango replies with a `[dango-sysinfo]` note that names the model(s) and says what went wrong, followed by the provider's own error text. The first line tells you where to look:
 
