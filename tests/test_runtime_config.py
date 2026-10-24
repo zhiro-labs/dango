@@ -92,7 +92,7 @@ class TestRoundTrip:
 class TestUnsafeCharacters:
     # Line breaks and control characters cannot appear in a "# ..." comment;
     # the file must still load and keep every allowed ID.
-    @pytest.mark.parametrize("name", ["a\nb", "a\r\nb", "a b", "a b", "a\x85b", "bell\x07"])
+    @pytest.mark.parametrize("name", ["a\nb", "a\r\nb", "a\u2028b", "a\u2029b", "a\x85b", "bell\x07"])
     def test_file_stays_loadable(self, config_path, name):
         rc = RuntimeConfig(str(config_path))
         rc.add_channel(1, name, name)

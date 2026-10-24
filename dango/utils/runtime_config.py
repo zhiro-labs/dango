@@ -42,7 +42,7 @@ DEFAULT_SETTINGS = {
 # breaks (including NEL and the Unicode line/paragraph separators) and
 # characters PyYAML's reader rejects as non-printable anywhere in the file.
 _COMMENT_UNSAFE = re.compile(
-    "[^\x09\x20-\x7e\xa0-‧‪-퟿-�\U00010000-\U0010ffff]"
+    "[^\x09\x20-\x7e\xa0-\u2027\u202a-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]"
 )
 
 
