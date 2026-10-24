@@ -91,8 +91,7 @@ async def call_discord_agent(step_input: StepInput) -> StepOutput:
     budget = route.spec.context_budget
     if budget:
         before = len(messages)
-        # Token counts use the fast model's tokenizer whichever model runs.
-        messages = trim_to_token_budget(messages, budget, model_id=agents.settings.fast.model_id)
+        messages = trim_to_token_budget(messages, budget, model_id=route.spec.model_id)
         trimmed = before - len(messages)
         if trimmed:
             print(f"✂️ [call_discord_agent] Trimmed {trimmed} messages to fit token budget ({budget})")

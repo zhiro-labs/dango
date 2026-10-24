@@ -528,12 +528,17 @@ class TestTrimming:
         run_step({**BASE_ENV, "CONTEXT_TOKEN_BUDGET": "1000"}, _step_input(history=_history(6)))
         assert len(runs.calls[0].input) == 7
 
-    def test_per_model_budget_and_tokenizer(self, runs, word_tokens):
+    def test_per_model_budget(self, runs, word_tokens):
         env = {**BASE_ENV, **DEEP_GEMINI, "CONTEXT_TOKEN_BUDGET": "1000", "DEEP_CONTEXT_TOKEN_BUDGET": "25"}
         run_step(env, _step_input(_message_data(_force_deep=True), history=_history(6)))
         assert len(runs.calls[0].input) == 3
-        # Token counting uses the fast model's id even when the deep model runs.
-        assert set(word_tokens) == {"gemini-2.5-flash"}
+
+    @pytest.mark.parametrize("force_deep, model_id", [(False, "gemini-2.5-flash"), (True, "gpt-4o")])
+    def test_tokens_counted_with_the_model_that_runs(self, runs, word_tokens, force_deep, model_id):
+        env = {**BASE_ENV, "DEEP_MODEL": "openai:gpt-4o", "CONTEXT_TOKEN_BUDGET": "25"}
+        run_step(env, _step_input(_message_data(_force_deep=force_deep), history=_history(6)))
+        assert runs.calls[0].agent.model.id == model_id
+        assert set(word_tokens) == {model_id}
 
     def test_counting_failure_keeps_everything(self, runs, monkeypatch):
         import agno.utils.tokens
