@@ -12,10 +12,43 @@ modes (Docker + GUI, uv, embedded package).
 It is reserved for credentials, model names, and feature flags.
 """
 
+import re
 from pathlib import Path
 from threading import Lock
 
 import yaml
+
+# Anything that cannot sit inside a single-line "# ..." YAML comment: line
+# breaks (including NEL and the Unicode line/paragraph separators) and
+# characters PyYAML's reader rejects as non-printable anywhere in the file.
+_COMMENT_UNSAFE = re.compile(
+    "[^\x09\x20-\x7e\xa0-‧‪-퟿-�\U00010000-\U0010ffff]"
+)
+
+
+def _comment(text: object) -> str:
+    """Make text safe to place after '#' on one YAML line."""
+    return _COMMENT_UNSAFE.sub(" ", str(text)).strip()
+
+
+def _dump(data: object) -> str:
+    """Serialize with PyYAML so every value is quoted and escaped as needed.
+
+    Server names, channel names and activity text are user-controlled; written
+    raw, values like "[TW] Gaming" or "Playing: chess" produce invalid YAML.
+    """
+    return yaml.safe_dump(
+        data,
+        allow_unicode=True,
+        default_flow_style=False,
+        sort_keys=False,
+        width=float("inf"),  # never wrap, so a list item stays on one line
+    )
+
+
+def _list_item(value: object, label: str) -> str:
+    """One '- value  # label' line, indented under its key."""
+    return f"  {_dump([value]).rstrip()}  # {_comment(label)}\n"
 
 
 class RuntimeConfig:
@@ -85,7 +118,7 @@ class RuntimeConfig:
                 meta = channel_metadata.get(str(cid), {})
                 server = meta.get("server", "Unknown Server")
                 channel = meta.get("channel", "Unknown Channel")
-                lines.append(f"  - {cid}  # {server} / #{channel}\n")
+                lines.append(_list_item(cid, f"{server} / #{channel}"))
 
         lines.append("\n# List of user IDs allowed to DM the bot\n")
         lines.append("allowed_users:\n")
@@ -94,34 +127,30 @@ class RuntimeConfig:
         else:
             for uid in users:
                 meta = user_metadata.get(str(uid), {})
-                lines.append(f"  - {uid}  # {meta.get('username', 'Unknown User')}\n")
+                lines.append(_list_item(uid, meta.get("username", "Unknown User")))
 
+        # Keys are forced to str so lookups by str(id) keep working on reload.
         lines.append("\n# Metadata for human-readable comments (auto-managed)\n")
-        lines.append("channel_metadata:\n")
-        if not channel_metadata:
-            lines.append("  {}\n")
-        else:
-            for cid, meta in channel_metadata.items():
-                lines.append(f"  '{cid}':\n")
-                lines.append(f"    server: {meta.get('server', 'Unknown')}\n")
-                lines.append(f"    channel: {meta.get('channel', 'Unknown')}\n")
+        lines.append(_dump({"channel_metadata": {
+            str(cid): {
+                "server": meta.get("server", "Unknown"),
+                "channel": meta.get("channel", "Unknown"),
+            }
+            for cid, meta in channel_metadata.items()
+        }}))
 
-        lines.append("\nuser_metadata:\n")
-        if not user_metadata:
-            lines.append("  {}\n")
-        else:
-            for uid, meta in user_metadata.items():
-                lines.append(f"  '{uid}':\n")
-                lines.append(f"    username: {meta.get('username', 'Unknown')}\n")
+        lines.append("\n")
+        lines.append(_dump({"user_metadata": {
+            str(uid): {"username": meta.get("username", "Unknown")}
+            for uid, meta in user_metadata.items()
+        }}))
 
-        lines.append(
-            f"\n# Timezone for bot operations\n"
-            f"timezone: {self._cache.get('timezone', 'UTC')}\n\n"
-            f"# Discord bot activity status message\n"
-            f"discord_activity: {self._cache.get('discord_activity', 'Surfing')}\n\n"
-            f"# Number of messages to include in conversation history\n"
-            f"history_limit: {self._cache.get('history_limit', 12)}\n"
-        )
+        lines.append("\n# Timezone for bot operations\n")
+        lines.append(_dump({"timezone": self._cache.get("timezone", "UTC")}))
+        lines.append("\n# Discord bot activity status message\n")
+        lines.append(_dump({"discord_activity": self._cache.get("discord_activity", "Surfing")}))
+        lines.append("\n# Number of messages to include in conversation history\n")
+        lines.append(_dump({"history_limit": self._cache.get("history_limit", 12)}))
 
         with open(self.config_path, "w", encoding="utf-8") as f:
             f.writelines(lines)
