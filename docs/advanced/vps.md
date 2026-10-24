@@ -16,7 +16,20 @@ The Docker setup works on any VPS. The one thing to be careful about: **the web 
 
 Do **not** open port `17860` in your VPS firewall. Anyone who can reach it can read and change your Discord token and API keys.
 
-Instead, access the dashboard through an SSH tunnel:
+The bundled `docker-compose.yml` already publishes the port on `127.0.0.1` only, so it is unreachable from outside the VPS. Keep it that way: a firewall alone is not enough, because ports Docker publishes bypass host firewalls such as UFW.
+
+::: warning Upgrading from an older docker-compose.yml
+Older copies of the file published the port as `"17860:17860"`, which listens on every network interface. Change that line to:
+
+```yaml
+    ports:
+      - "127.0.0.1:17860:17860"
+```
+
+then run `docker compose up -d`.
+:::
+
+To reach the dashboard from your own computer, use an SSH tunnel:
 
 ```bash
 ssh -L 17860:localhost:17860 user@your-vps-ip
