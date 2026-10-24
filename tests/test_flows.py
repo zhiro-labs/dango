@@ -386,3 +386,110 @@ class TestDeepCommand:
         assert posted == []
         assert ephemeral == ["❌ `DEEP_MODEL` is not configured — `/deep` is unavailable."]
         assert w.model.calls == []
+
+
+# ── Setup: dashboard → config.yaml → env → running bot ────────────────────────
+
+COMPLEX = "Why does quicksort degrade to O(n^2) on sorted input? Explain step by step and compare it with mergesort."
+
+
+@pytest.fixture
+def dashboard():
+    from web import main as web_main
+
+    return TestClient(web_main.app, base_url=LOCAL)
+
+
+class TestSetupFlow:
+    def test_setup_wizard_to_first_replies(self, dashboard, make_world):
+        import app_config
+
+        # First visit goes to the wizard; finishing it saves data/config.yaml.
+        assert dashboard.get("/", follow_redirects=False).headers["location"] == "/setup"
+        r = dashboard.post("/setup/complete", headers=ORIGIN, follow_redirects=False, data={
+            "discord_token": "discord-token",
+            "fast_api_key": "gemini-key",
+            "fast_model": "google:gemini-2.5-flash",
+            "chat_sys_prompt": "You are Mochi, a cheerful helper.",
+        })
+        assert r.headers["location"] == "/overview"
+        assert dashboard.get("/", follow_redirects=False).headers["location"] == "/overview"
+
+        # Further settings from the dashboard tabs.
+        dashboard.post("/api/config/models/deep", headers=ORIGIN, data={
+            "deep_model": "openai:gpt-4o", "deep_api_key": "openai-key",
+        })
+        dashboard.post("/api/config/features", headers=ORIGIN, data={
+            "auto_route": "on", "fallback_on_error": "on",
+            "enable_contextual_system_prompt": "on", "enable_duckduckgo": "on",
+        })
+        dashboard.post("/api/runtime/channels/add", headers=ORIGIN, data={"channel_id": "222"})
+
+        # Bot startup (main.py): config.yaml → env, then the bot is built from env.
+        prompt = app_config.inject_config_to_env()
+        assert prompt == "You are Mochi, a cheerful helper."
+        assert os.environ["DISCORD_BOT_TOKEN"] == "discord-token"
+        w = make_world(chat_prompt=prompt, use_current_env=True)
+
+        # A plain message in the allowed channel goes to the fast model.
+        w.model.reply("Mochi here!")
+        assert [m.content for m in w.say(w.alice, "hello")] == ["Mochi here!"]
+        fast = w.model.last.agent
+        assert (fast.model.id, fast.model.api_key) == ("gemini-2.5-flash", "gemini-key")
+        assert [t.name for t in fast.tools] == ["websearch"]
+        assert fast.instructions(session_state=w.model.last.session_state).startswith(prompt)
+        assert os.environ["OPENAI_API_KEY"] == "openai-key"
+
+        # A complex question is auto-routed to the deep model.
+        w.model.reply("Here is why...")
+        w.say(w.alice, COMPLEX)
+        assert w.model.last.agent.model.id == "gpt-4o"
+
+        # A failing fast model falls back to the deep one, with a note. ("thanks!"
+        # is a closer, so routing keeps it on the fast model despite the history.)
+        w.model.fail("503 UNAVAILABLE")
+        w.model.reply("You're welcome!")
+        sent = w.say(w.alice, "thanks!")
+        assert [c.agent.model.id for c in w.model.calls[-2:]] == ["gemini-2.5-flash", "gpt-4o"]
+        assert [m.content for m in sent] == [
+            "You're welcome!",
+            "> [dango-sysinfo]\n> ⚡ google:gemini-2.5-flash failed — response served by openai:gpt-4o.",
+        ]
+
+    def test_dashboard_changes_reach_the_running_bot(self, dashboard, make_world):
+        w = make_world()
+        for author, text in [(w.bob, "one"), (w.bot_user, "two"), (w.bob, "three"), (w.bot_user, "four")]:
+            w.general.post(author, text)
+        assert w.say(w.alice, "hi") == []  # #general not allowed yet
+
+        dashboard.post("/api/runtime/channels/add", headers=ORIGIN, data={"channel_id": "222"})
+        r = dashboard.post("/api/runtime/settings", headers=ORIGIN, data={
+            "timezone": "Asia/Tokyo", "discord_activity": "Reading", "history_limit": "3",
+        })
+        assert "Saved" in r.text
+        _bump_mtime()
+
+        w.model.reply("Hello from Tokyo time!")
+        assert [m.content for m in w.say(w.alice, "hi")] == ["Hello from Tokyo time!"]
+        call = w.model.last
+        assert (call.session_state["timezone"], call.session_state["history_limit"]) == ("Asia/Tokyo", 3)
+        # 3 messages of history before this one: "three", "four", and Alice's unanswered "hi".
+        assert _turns(call) == [
+            ("user", "Bob: three"),
+            ("assistant", "four"),
+            ("user", "Alice: hi"),
+            ("user", "Alice: hi"),
+        ]
+        assert "Timezone: Asia/Tokyo" in call.agent.instructions(session_state=call.session_state)
+
+    def test_invalid_dashboard_settings_never_reach_the_bot(self, dashboard, make_world):
+        w = make_world()
+        w.runtime.add_channel(222)
+        r = dashboard.post("/api/runtime/settings", headers=ORIGIN, data={
+            "timezone": "Taipei", "discord_activity": "x", "history_limit": "5",
+        })
+        assert "Unknown timezone" in r.text
+
+        w.model.reply("still fine")
+        assert [m.content for m in w.say(w.alice, "hi")] == ["still fine"]
+        assert w.model.last.session_state["timezone"] == "UTC"
