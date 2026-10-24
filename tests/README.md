@@ -17,8 +17,10 @@ uv run pytest tests/test_flows.py -k deep_round_trip -v
 ```
 
 GitHub Actions runs the whole suite on every push to `main` and on every pull
-request (`.github/workflows/test.yml`), with the same `uv sync --frozen` +
-`uv run --frozen pytest` steps you can run locally.
+request (`.github/workflows/test.yml`), on Python 3.12 and 3.14 (the bounds
+of `requires-python`), with the same `uv sync --frozen` +
+`uv run --frozen pytest` steps you can run locally. To run another version
+locally: `UV_PYTHON=3.14 uv run --frozen pytest -q`.
 
 ## End-to-end flows
 

@@ -17,16 +17,25 @@ concurrency:
 
 jobs:
   pytest:
+    name: pytest (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      # Let every version finish, so a failure shows which versions it hits.
+      fail-fast: false
+      matrix:
+        # The bounds of requires-python: 3.12 is what the Docker image and
+        # .python-version use; 3.14 is the newest supported version.
+        python-version: ["3.12", "3.14"]
     steps:
       - uses: actions/checkout@v7
 
-      # Installs uv (same version as the Dockerfile) and the Python version
-      # pinned in .python-version.
+      # Installs uv (same version as the Dockerfile) and points UV_PYTHON at
+      # the matrix version, overriding .python-version.
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           version: "0.13.5"
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
 
       - name: Install dependencies
