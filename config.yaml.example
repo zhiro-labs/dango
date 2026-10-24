@@ -73,6 +73,12 @@ gemini_thinking_budget: ""     # int; empty = model default
 gemini_thinking_level: ""      # "low" | "high" | ""
 context_token_budget: ""       # trim history to this many tokens; empty = no trim
 
+# ── Large tool results ────────────────────────────────────────────────────────
+# Results longer than this reach the model as a preview it can read further
+# into; the full text sits in a temporary database deleted when the bot stops.
+tool_result_offload_chars: ""  # characters; empty = 16000, 0 = always send in full
+tool_result_ttl_seconds: ""    # how long stored results stay readable; empty = 3600, 0 = until exit
+
 # ── Per-model overrides (empty = inherit the shared default above) ────────────
 fast_search: ""
 fast_url_context: ""

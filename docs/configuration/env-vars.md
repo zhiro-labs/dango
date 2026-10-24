@@ -116,6 +116,15 @@ A malformed `SKILL.md` aborts startup with a clear error rather than being silen
 For writing your own commands and agent tools in Python (no env var needed — just
 drop files into `custom/`), see [Custom Commands & Tools](../features/extensions.md).
 
+## Large tool results
+
+| Variable | Default | Description |
+|---|---|---|
+| `TOOL_RESULT_OFFLOAD_CHARS` | `16000` | Tool results longer than this many characters reach the model as a preview it can read further into; the full text sits in a temporary SQLite database deleted when the bot stops. `0` = always send results in full. See [Large Tool Results](../features/tools.md#large-tool-results). |
+| `TOOL_RESULT_TTL_SECONDS` | `3600` | How long a stored result stays readable. `0` = until the bot stops. |
+
+Both must be whole numbers of 0 or more; anything else stops the bot at startup with an error naming the variable.
+
 ## Web dashboard
 
 Set these on the `web` service, not the bot.

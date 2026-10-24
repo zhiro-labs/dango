@@ -78,6 +78,10 @@ def inject_config_to_env() -> str | None:
     _set("GEMINI_THINKING_LEVEL",       cfg.get("gemini_thinking_level"))
     _set("CONTEXT_TOKEN_BUDGET",        cfg.get("context_token_budget"))
 
+    # ── Large tool results (empty = default, 0 = off) ─────────────────────────
+    _set("TOOL_RESULT_OFFLOAD_CHARS",   cfg.get("tool_result_offload_chars"))
+    _set("TOOL_RESULT_TTL_SECONDS",     cfg.get("tool_result_ttl_seconds"))
+
     # ── Per-model overrides ───────────────────────────────────────────────────
     for prefix in ("fast", "deep"):
         env = prefix.upper()

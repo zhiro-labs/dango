@@ -493,6 +493,30 @@
         </div>
         <p class="text-xs text-base-content/35">Max input tokens sent to the model per request. Set to 0 for no limit.</p>
 
+        <div class="grid grid-cols-2 gap-3">
+          <div class="form-control">
+            <label class="label py-1">
+              <span class="label-text text-xs font-medium">Large Tool Results</span>
+              <span class="label-text-alt text-base-content/40 text-xs">characters</span>
+            </label>
+            <input name="tool_result_offload_chars" type="text" inputmode="numeric"
+              value="{{ config.tool_result_offload_chars }}"
+              placeholder="16000"
+              class="input input-bordered input-sm font-mono" />
+          </div>
+          <div class="form-control">
+            <label class="label py-1">
+              <span class="label-text text-xs font-medium">Keep Stored Results</span>
+              <span class="label-text-alt text-base-content/40 text-xs">seconds</span>
+            </label>
+            <input name="tool_result_ttl_seconds" type="text" inputmode="numeric"
+              value="{{ config.tool_result_ttl_seconds }}"
+              placeholder="3600"
+              class="input input-bordered input-sm font-mono" />
+          </div>
+        </div>
+        <p class="text-xs text-base-content/35">Tool results longer than this (a web page, an API response) reach the model as a short preview it can read further into; the full text sits in a temporary database deleted when the bot stops. 0 sends results in full. Raise it for large-context models, lower it for small local ones.</p>
+
         <div class="flex justify-end items-center gap-3">
           <span id="advanced-status" class="text-sm"></span>
           <button type="submit" class="btn btn-primary btn-sm">Save</button>

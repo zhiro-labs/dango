@@ -1,5 +1,5 @@
 ---
-summary: "DuckDuckGo search, website fetching, workspace file access, on-demand skills, custom HTTP APIs, SQL databases."
+summary: "DuckDuckGo search, website fetching, workspace file access, on-demand skills, custom HTTP APIs, SQL databases, and keeping large tool results out of context."
 description: "Extend Dango with web search (DuckDuckGo, Brave Search), URL fetching, workspace file access, on-demand skills (SKILL.md folders), custom HTTP API tools, and SQL database queries — all configurable from the web dashboard."
 tags:
   - Tools
@@ -198,3 +198,39 @@ async def stock(ctx: Ctx, ticker: str) -> str:
 ```
 
 See [Custom Commands & Tools](extensions.md) for the full guide.
+
+## Large Tool Results
+
+A single tool call can return far more text than the model needs: a long web
+page, a crawl of several pages, a verbose API response. Sent in full, that text
+is paid for on every model call that follows in the same reply, and it can
+overflow a small local model's context window.
+
+So a result longer than `TOOL_RESULT_OFFLOAD_CHARS` (default 16,000 characters,
+about 4,000 tokens) reaches the model as a short preview — the first lines, the
+total size and a result id. The model gets two extra tools to go back for more:
+
+- `read_result` reads any range of lines (up to 16,000 characters per call)
+- `search_result` finds the passages matching a pattern
+
+This applies to every tool, including your own [custom tools](extensions.md).
+Nothing is summarized away; the full text stays readable.
+
+**Where the full text lives.** In a SQLite file inside a fresh temporary
+directory (`dango-tool-results-*` in the system temp folder; inside Docker,
+the container's own `/tmp`, not the `data/` volume). It is created when the bot
+starts and deleted when it stops; while running, results expire after
+`TOOL_RESULT_TTL_SECONDS` (default one hour). The agents themselves keep no
+database, so conversations are never stored. If the process is killed outright,
+the directory is left behind with at most the last hour of results.
+
+**Tuning.** Reading a long result piece by piece costs more than sending it
+once, because every earlier piece is resent with each later call. So:
+
+| Model | Suggested `TOOL_RESULT_OFFLOAD_CHARS` |
+|---|---|
+| Large-context cloud model (Gemini, GPT, Claude) | Raise it, e.g. `60000`, so most pages arrive whole |
+| Small local model (Ollama, LM Studio) | Keep the default or lower it, e.g. `8000` |
+| Always send results in full | `0` |
+
+Both values are also under **Models → Advanced** in the dashboard.

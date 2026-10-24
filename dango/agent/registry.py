@@ -12,6 +12,7 @@ from agno.models.base import Model
 
 from .instructions import make_instructions
 from .models import DangoGemini, inject_provider_key, make_model
+from .result_store import make_result_store
 from .settings import AgentSettings, ModelSpec, get_settings
 from .skills import get_skills
 from .tools import build_tools
@@ -37,7 +38,7 @@ class Agents:
         return self.settings.deep if agent is self.deep else self.settings.fast
 
 
-def _build_agent(model, settings: AgentSettings, fast_model, instructions) -> Agent:
+def _build_agent(model, settings: AgentSettings, fast_model, instructions, result_store) -> Agent:
     return Agent(
         model=model,
         tools=build_tools(settings, fast_model) or None,
@@ -47,6 +48,9 @@ def _build_agent(model, settings: AgentSettings, fast_model, instructions) -> Ag
         # each call), so add_datetime_to_context is intentionally off.
         add_history_to_context=False,
         markdown=False,
+        # No db on purpose: history comes from Discord. Large tool results go
+        # to the store's own temporary database instead (None = off).
+        offload_tool_results=result_store,
     )
 
 
@@ -67,10 +71,13 @@ def _build_agents(settings: AgentSettings) -> Agents:
         )
 
     instructions = make_instructions(settings.contextual_prompt)
+    result_store = make_result_store(settings)
     fast_model = make_model(fast)
-    fast_agent = _build_agent(fast_model, settings, fast_model, instructions)
+    fast_agent = _build_agent(fast_model, settings, fast_model, instructions, result_store)
     deep_model = make_model(deep) if deep else None
-    deep_agent = _build_agent(deep_model, settings, fast_model, instructions) if deep_model else None
+    deep_agent = (
+        _build_agent(deep_model, settings, fast_model, instructions, result_store) if deep_model else None
+    )
     return Agents(settings, fast_agent, fast_model, deep_agent, deep_model)
 
 

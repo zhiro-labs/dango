@@ -67,9 +67,33 @@ class AgentSettings:
     enable_sql_databases: bool
     sql_databases: tuple[dict, ...]
 
+    # Tool results longer than this many characters are kept out of the
+    # model's context (preview + id, read back on demand); 0 turns it off.
+    tool_result_offload_chars: int
+    # How long an offloaded result stays readable; 0 keeps it until exit.
+    tool_result_ttl_seconds: int
+
 
 def _onoff(name: str, default: bool = False) -> bool:
     return env_onoff_to_bool(os.getenv(name), default=default)
+
+
+DEFAULT_TOOL_RESULT_OFFLOAD_CHARS = 16_000  # Agno's default: one read_result page
+DEFAULT_TOOL_RESULT_TTL_SECONDS = 3_600
+
+
+def _non_negative_int(name: str, default: int) -> int:
+    """An env var holding a whole number >= 0; unset or blank means `default`."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a whole number, got {raw!r}") from None
+    if value < 0:
+        raise ValueError(f"{name} must be 0 or more, got {value}")
+    return value
 
 
 def _context_budget(prefix: str) -> int:
@@ -132,6 +156,12 @@ def load_settings() -> AgentSettings:
         custom_apis=tuple(custom_apis),
         enable_sql_databases=_onoff("ENABLE_SQL_DATABASES"),
         sql_databases=tuple(sql_databases),
+        tool_result_offload_chars=_non_negative_int(
+            "TOOL_RESULT_OFFLOAD_CHARS", DEFAULT_TOOL_RESULT_OFFLOAD_CHARS
+        ),
+        tool_result_ttl_seconds=_non_negative_int(
+            "TOOL_RESULT_TTL_SECONDS", DEFAULT_TOOL_RESULT_TTL_SECONDS
+        ),
     )
 
 

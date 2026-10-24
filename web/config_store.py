@@ -68,6 +68,12 @@ class BotConfig(BaseModel):
     gemini_thinking_level: str = ""  # "low" | "high" | ""
     context_token_budget: str = ""
 
+    # ── Large tool results (empty = default, 0 = off) ─────────────────────────
+    # Results longer than this many characters are kept out of the model's
+    # context (default 16000) for this many seconds (default 3600).
+    tool_result_offload_chars: str | int = ""
+    tool_result_ttl_seconds: str | int = ""
+
     # ── Fast model overrides (empty = inherit shared default) ─────────────────
     fast_search: str = ""
     fast_url_context: str = ""
