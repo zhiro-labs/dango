@@ -14,6 +14,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import docker_api
 from .config_store import is_setup_complete, load_config, save_config
+from .security import DashboardGuard
 
 WEB_PORT = os.getenv("WEB_PORT", "17860")
 _DATA_DIR = Path(os.getenv("DATA_DIR", "data"))
@@ -111,6 +112,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Dango", lifespan=lifespan)
+app.add_middleware(DashboardGuard)
 templates = Jinja2Templates(directory="web/templates")
 templates.env.filters["mask_db_url"] = lambda url: re.sub(r"://([^:]+):([^@]+)@", r"://\1:***@", url)
 

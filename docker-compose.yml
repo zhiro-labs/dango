@@ -7,6 +7,9 @@ services:
     command: uv run uvicorn web.main:app --host 0.0.0.0 --port 17860
     environment:
       - WEB_PORT=17860
+      # Extra hosts the dashboard may be opened at (loopback is always allowed).
+      # See docs/advanced/vps.md before changing this or the port binding.
+      # - WEB_ALLOWED_HOSTS=192.168.1.50
     ports:
       # Localhost only: the dashboard has no login. Docker-published ports
       # bypass host firewalls such as UFW, so "17860:17860" would be public.

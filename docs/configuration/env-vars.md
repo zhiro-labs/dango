@@ -116,6 +116,14 @@ A malformed `SKILL.md` aborts startup with a clear error rather than being silen
 For writing your own commands and agent tools in Python (no env var needed — just
 drop files into `custom/`), see [Custom Commands & Tools](../features/extensions.md).
 
+## Web dashboard
+
+Set these on the `web` service, not the bot.
+
+| Variable | Default | Description |
+|---|---|---|
+| `WEB_ALLOWED_HOSTS` | _(empty)_ | Comma-separated extra hostnames or IPs the dashboard may be opened at, e.g. `192.168.1.50,dango.lan`. `localhost`, `127.0.0.1` and `::1` are always allowed. Requests for any other `Host` get `400` — this blocks DNS-rebinding attacks. See [VPS Deployment](../advanced/vps.md#accessing-from-another-device) before adding one. |
+
 ## Google / Gemini-specific
 
 These apply to `google:` models only. Ignored for all other providers.
