@@ -268,3 +268,53 @@ class TestValidation:
         interaction.response.send_message.assert_awaited_once_with(
             "❌ History limit must be at least 1.", ephemeral=True
         )
+
+
+# ── Picking up edits while running ────────────────────────────────────────────
+
+def _bump_mtime(path: Path) -> None:
+    """Make sure the next read sees a changed file, however fast the test runs."""
+    st = path.stat()
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+
+
+class TestLiveReload:
+    def test_hand_edit_is_picked_up_on_next_read(self, workdir):
+        _write(workdir, EXISTING)
+        bot = RuntimeConfig("config/runtime.yml")
+        _write(workdir, {**EXISTING, "allowed_channels": [999], "timezone": "Europe/Berlin"})
+        _bump_mtime(workdir / "config" / "runtime.yml")
+        assert bot.allowed_channels == {999}
+        assert bot.timezone == "Europe/Berlin"
+
+    def test_dashboard_edit_is_picked_up_without_a_restart(self, client, workdir):
+        _write(workdir, EXISTING)
+        bot = RuntimeConfig("config/runtime.yml")
+        client.post("/api/runtime/channels/add", data={"channel_id": "444"}, headers=ORIGIN)
+        _bump_mtime(workdir / "config" / "runtime.yml")
+        assert 444 in bot.allowed_channels
+
+    def test_broken_edit_keeps_last_good_settings_until_fixed(self, workdir, capsys):
+        path = workdir / "config" / "runtime.yml"
+        _write(workdir, EXISTING)
+        bot = RuntimeConfig("config/runtime.yml")
+
+        path.write_text(CORRUPT, encoding="utf-8")
+        _bump_mtime(path)
+        assert bot.allowed_channels == {111, 222}
+        assert bot.timezone == "Asia/Taipei"
+        assert capsys.readouterr().out.count("Keeping the last good settings") == 1
+
+        _write(workdir, {**EXISTING, "allowed_channels": [5]})
+        _bump_mtime(path)
+        assert bot.allowed_channels == {5}
+
+    def test_unchanged_file_is_not_reread(self, workdir, monkeypatch):
+        _write(workdir, EXISTING)
+        bot = RuntimeConfig("config/runtime.yml")
+        reads = []
+        original = RuntimeConfig._read
+        monkeypatch.setattr(RuntimeConfig, "_read", lambda self: reads.append(1) or original(self))
+        for _ in range(5):
+            bot.allowed_channels
+        assert reads == []

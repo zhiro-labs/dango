@@ -50,7 +50,7 @@
 
       <div>
         <h2 class="font-semibold text-sm">Bot Settings</h2>
-        <p class="text-xs text-base-content/45 mt-0.5">General runtime behaviour. Restart bot to apply. Also configurable via <code class="font-mono">/setactivity</code> <code class="font-mono">/sethistorylimit</code> <code class="font-mono">/settimezone</code>.</p>
+        <p class="text-xs text-base-content/45 mt-0.5">General runtime behaviour. History limit and timezone apply to the next message; a new activity shows after a bot restart. Also configurable via <code class="font-mono">/setactivity</code> <code class="font-mono">/sethistorylimit</code> <code class="font-mono">/settimezone</code>.</p>
       </div>
 
       <form hx-post="/api/runtime/settings" hx-target="#settings-status" hx-swap="innerHTML" class="flex flex-col gap-3">

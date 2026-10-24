@@ -124,6 +124,7 @@ class RuntimeConfig:
         self._cache: dict = {}
         self._default_channels: list[int] = default_channels or []
         self._load_error: RuntimeConfigError | None = None
+        self._mtime: int | None = None  # file mtime (ns) behind the cache
         try:
             self._load()
         except RuntimeConfigError as e:
@@ -150,9 +151,17 @@ class RuntimeConfig:
             data[key] = dict(data.get(key) or {})
         return data
 
+    def _file_mtime(self) -> int | None:
+        try:
+            return self.config_path.stat().st_mtime_ns
+        except FileNotFoundError:
+            return None
+
     def _load(self) -> None:
         if self.config_path.exists():
+            mtime = self._file_mtime()
             self._cache = self._read()
+            self._mtime = mtime
         else:
             # First run — create file with sane defaults
             self._cache = {
@@ -166,9 +175,27 @@ class RuntimeConfig:
         self._load_error = None
 
     def _data(self) -> dict:
-        if self._load_error is not None:
-            raise self._load_error
-        return self._cache
+        """The settings for a read, refreshed if the file changed on disk.
+
+        Picks up edits made by hand or by the dashboard on the next read. If
+        the new contents cannot be parsed, the last good settings are kept
+        (with a warning) so a typo does not take the bot down mid-run.
+        """
+        with self._lock:
+            mtime = self._file_mtime()
+            if mtime is not None and mtime != self._mtime:
+                try:
+                    self._cache = self._read()
+                    self._load_error = None
+                except RuntimeConfigError as e:
+                    if self._load_error is None:
+                        print(f"⚠️ [runtime_config] {e} Keeping the last good settings.")
+                    else:
+                        self._load_error = e
+                self._mtime = mtime  # warn once per change, not on every read
+            if self._load_error is not None:
+                raise self._load_error
+            return self._cache
 
     def _mutate(self, change: Callable[[dict], T]) -> T:
         """Apply `change` to the file's current contents and save if it changed.
@@ -244,6 +271,7 @@ class RuntimeConfig:
         tmp = self.config_path.with_name(f".{self.config_path.name}.tmp")
         tmp.write_text("".join(lines), encoding="utf-8")
         os.replace(tmp, self.config_path)
+        self._mtime = self._file_mtime()
 
     # ── Public read API ───────────────────────────────────────────────────────
 

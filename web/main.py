@@ -397,6 +397,9 @@ async def validate_google(key: str = Form(...)):
 _SAVED = '<span class="badge badge-success badge-sm">✓ Saved</span>'
 _RESTART = ' <span class="badge badge-warning badge-sm">Restart bot to apply</span>'
 _SAVED_R = _SAVED + _RESTART
+# runtime.yml is re-read by the bot on the next message; only the activity
+# (Discord presence) is applied at startup.
+_SAVED_RUNTIME = _SAVED + ' <span class="badge badge-warning badge-sm">Activity applies after restart</span>'
 
 
 # ── Config endpoints ───────────────────────────────────────────────────────────
@@ -573,7 +576,7 @@ async def save_runtime_settings(
         )
     except (ValueError, RuntimeConfigError) as e:
         return _runtime_error(e)
-    return _SAVED_R
+    return _SAVED_RUNTIME
 
 
 @app.post("/api/runtime/channels/add", response_class=HTMLResponse)
