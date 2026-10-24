@@ -12,11 +12,11 @@ class TestFetchAndProcessHistory:
         assert fetch_and_process_history is not None
 
     def test_is_async(self):
-        import asyncio
+        import inspect
 
         from dango.steps.fetch_history import fetch_and_process_history
 
-        assert asyncio.iscoroutinefunction(fetch_and_process_history)
+        assert inspect.iscoroutinefunction(fetch_and_process_history)
 
 
 class TestCallDiscordAgent:
@@ -28,11 +28,11 @@ class TestCallDiscordAgent:
         assert call_discord_agent is not None
 
     def test_is_async(self):
-        import asyncio
+        import inspect
 
         from dango.steps.call_agent import call_discord_agent
 
-        assert asyncio.iscoroutinefunction(call_discord_agent)
+        assert inspect.iscoroutinefunction(call_discord_agent)
 
 
 class TestExtractAndRenderTables:
@@ -44,11 +44,11 @@ class TestExtractAndRenderTables:
         assert extract_and_render_tables is not None
 
     def test_is_async(self):
-        import asyncio
+        import inspect
 
         from dango.steps.table_steps import extract_and_render_tables
 
-        assert asyncio.iscoroutinefunction(extract_and_render_tables)
+        assert inspect.iscoroutinefunction(extract_and_render_tables)
 
     def test_parse_table(self):
         from dango.steps.table_steps import _parse_table
@@ -75,11 +75,11 @@ class TestSendDiscordResponse:
         assert send_discord_response is not None
 
     def test_is_async(self):
-        import asyncio
+        import inspect
 
         from dango.steps.send_response import send_discord_response
 
-        assert asyncio.iscoroutinefunction(send_discord_response)
+        assert inspect.iscoroutinefunction(send_discord_response)
 
 
 class TestBuildInstructions:

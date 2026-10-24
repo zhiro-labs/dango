@@ -98,13 +98,14 @@ class TestSameOriginWrites:
         assert _client().get("/", headers={"origin": "https://evil.example"}).status_code == 200
 
 
+@pytest.fixture(scope="module")
+def app():
+    from web.main import app
+    return app
+
+
 class TestDashboardApp:
     """The guard must be installed on the real dashboard app."""
-
-    @pytest.fixture(scope="class")
-    def app(self):
-        from web.main import app
-        return app
 
     def test_foreign_host_is_rejected(self, app):
         r = TestClient(app, base_url="http://evil.example").get("/api/bot/status")
