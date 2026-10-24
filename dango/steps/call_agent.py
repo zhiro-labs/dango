@@ -10,10 +10,8 @@ via session_state.
 import asyncio
 import os
 
-import aiohttp
 from agno.agent import Agent
 from agno.exceptions import ModelProviderError
-from agno.media import Image
 from agno.models.google import Gemini
 from agno.models.message import Message
 from agno.run.base import RunStatus
@@ -23,6 +21,7 @@ from ..utils.build_instructions import build_instructions
 from ..utils.complexity_router import URL as _URL_RE, classify
 from ..utils.config_utils import env_bool, env_onoff_to_bool
 from ..utils.discord_helpers import format_sysinfo, resolve_mentions
+from ..utils.media import download_attachment_images, download_sticker_images
 
 
 # ── Provider → API key env var mapping ────────────────────────────────────────
@@ -748,64 +747,6 @@ def _select_agent(
     return _fast, FAST_MODEL, FAST_CONTEXT_TOKEN_BUDGET
 
 
-async def _download_current_images(attachments: list) -> list[Image]:
-    """Download image attachments from the current user message."""
-    images: list[Image] = []
-    async with aiohttp.ClientSession() as session:
-        for att in attachments:
-            if "dango_replaced" in att.get("filename", ""):
-                continue
-            content_type = att.get("content_type", "")
-            if not content_type.startswith("image/"):
-                continue
-            try:
-                async with session.get(att["url"]) as resp:
-                    if resp.status == 200:
-                        data = await resp.read()
-                        images.append(Image(content=data, mime_type=content_type))
-            except Exception as e:
-                print(f"❌ [call_discord_agent] Failed to download image: {e}")
-    return images
-
-
-# Sticker format → image mime type. Lottie (Discord's default packs) is vector
-# JSON, not viewable by vision models, so it is intentionally absent here.
-_STICKER_IMAGE_MIME = {
-    "png":  "image/png",
-    "apng": "image/png",
-    "gif":  "image/gif",
-}
-
-
-async def _download_current_stickers(stickers: list) -> tuple[list[Image], list[str]]:
-    """Download community sticker images from the current user message.
-
-    Returns (images, names). Image-format stickers (PNG/APNG/GIF) are downloaded
-    so the model can see them; every sticker's name is returned regardless of
-    format so Lottie stickers still reach the model as text.
-    """
-    images: list[Image] = []
-    names: list[str] = []
-    if not stickers:
-        return images, names
-    async with aiohttp.ClientSession() as session:
-        for st in stickers:
-            name = st.get("name", "")
-            if name:
-                names.append(name)
-            mime = _STICKER_IMAGE_MIME.get(st.get("format", "").lower())
-            if not mime:
-                continue
-            try:
-                async with session.get(st["url"]) as resp:
-                    if resp.status == 200:
-                        data = await resp.read()
-                        images.append(Image(content=data, mime_type=mime))
-            except Exception as e:
-                print(f"❌ [call_discord_agent] Failed to download sticker: {e}")
-    return images, names
-
-
 async def call_discord_agent(step_input: StepInput) -> StepOutput:
     """Run the Discord agent with per-request context injected via session_state."""
     _initialize_agents()
@@ -822,12 +763,14 @@ async def call_discord_agent(step_input: StepInput) -> StepOutput:
     _deep: Agent | None = deep_agent
 
     current_content = resolve_mentions(message_data["content"], mention_map)
-    current_images = await _download_current_images(message_data.get("attachments", []))
+    current_images = await download_attachment_images(
+        message_data.get("attachments", []), log_tag="call_discord_agent"
+    )
 
     # Stickers: append the downloaded images and note their names in text, so the
     # model knows the image is a sticker (and still gets the name for Lottie ones).
-    sticker_images, sticker_names = await _download_current_stickers(
-        message_data.get("stickers", [])
+    sticker_images, sticker_names = await download_sticker_images(
+        message_data.get("stickers", []), log_tag="call_discord_agent"
     )
     if sticker_images:
         current_images.extend(sticker_images)

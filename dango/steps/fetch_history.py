@@ -13,6 +13,9 @@ from agno.models.message import Message
 from agno.workflow import StepInput, StepOutput
 
 from ..utils.discord_helpers import ROLE_MENTION_RE, SYSINFO_MARKER, USER_MENTION_RE, format_reply_context, resolve_mentions
+from ..utils.media import fetch_image, is_model_image, sticker_mime
+
+_LOG_TAG = "fetch_and_process_history"
 
 
 async def fetch_and_process_history(step_input: StepInput) -> StepOutput:
@@ -163,14 +166,11 @@ async def _extract_deep_attachments(msgs: list) -> dict:
             if deep_info is not None:
                 images: list[Image] = []
                 for img_att in image_attachments:
-                    try:
-                        async with session.get(img_att.url) as resp:
-                            if resp.status == 200:
-                                images.append(Image(content=await resp.read(), mime_type=img_att.content_type))
-                    except Exception as e:
-                        print(
-                            f"❌ [fetch_and_process_history] Failed to download deep image: {e}"
-                        )
+                    image = await fetch_image(
+                        session, img_att.url, img_att.content_type, _LOG_TAG, what="deep image"
+                    )
+                    if image:
+                        images.append(image)
                 deep_info["_images"] = images
                 deep_map[msg.id] = deep_info
 
@@ -186,30 +186,14 @@ async def _download_image_attachments(msgs: list, bot_user_id: int) -> dict:
                 continue
             images: list[Image] = []
             for attachment in msg.attachments:
-                if "dango_replaced" in attachment.filename:
+                if not is_model_image(attachment.filename, attachment.content_type):
                     continue
-                content_type = attachment.content_type or ""
-                if not content_type.startswith("image/"):
-                    continue
-                try:
-                    async with session.get(attachment.url) as resp:
-                        if resp.status == 200:
-                            data = await resp.read()
-                            images.append(Image(content=data, mime_type=content_type))
-                except Exception as e:
-                    print(f"❌ [fetch_and_process_history] Failed to download image: {e}")
+                image = await fetch_image(session, attachment.url, attachment.content_type, _LOG_TAG)
+                if image:
+                    images.append(image)
             if images:
                 image_map[msg.id] = images
     return image_map
-
-
-# Sticker format → image mime type. Lottie (Discord's default packs) is vector
-# JSON, not viewable by vision models, so it is intentionally absent here.
-_STICKER_IMAGE_MIME = {
-    "png":  "image/png",
-    "apng": "image/png",
-    "gif":  "image/gif",
-}
 
 
 async def _download_sticker_map(msgs: list, bot_user_id: int) -> dict:
@@ -230,16 +214,12 @@ async def _download_sticker_map(msgs: list, bot_user_id: int) -> dict:
             for sticker in msg.stickers:
                 if sticker.name:
                     names.append(sticker.name)
-                fmt = sticker.format.name.lower() if sticker.format else ""
-                mime = _STICKER_IMAGE_MIME.get(fmt)
+                mime = sticker_mime(sticker.format.name if sticker.format else None)
                 if not mime:
                     continue
-                try:
-                    async with session.get(str(sticker.url)) as resp:
-                        if resp.status == 200:
-                            images.append(Image(content=await resp.read(), mime_type=mime))
-                except Exception as e:
-                    print(f"❌ [fetch_and_process_history] Failed to download sticker: {e}")
+                image = await fetch_image(session, str(sticker.url), mime, _LOG_TAG, what="sticker")
+                if image:
+                    images.append(image)
             if images or names:
                 sticker_map[msg.id] = {"images": images, "names": names}
     return sticker_map
