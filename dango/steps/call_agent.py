@@ -10,15 +10,37 @@ per-request context is passed via session_state.
 """
 
 from agno.models.message import Message
-from agno.run.base import RunStatus
 from agno.workflow import StepInput, StepOutput
 
-from ..agent import choose_route, get_agents, run_with_fallback, trim_to_token_budget
+from ..agent import FailureKind, choose_route, classify_failure, get_agents, run_with_fallback, trim_to_token_budget
 from ..extensions.context import reset_request_context, set_request_context
 from ..utils.discord_helpers import format_sysinfo, resolve_mentions
 from ..utils.media import download_attachment_images, download_sticker_images
 
 _LOG_TAG = "call_discord_agent"
+
+# Reply when every model tried has failed. {tried} names the model(s).
+_FAILURE_REPLIES = {
+    FailureKind.OVERLOADED:
+        "⚠️ The model is currently overloaded ({tried} unavailable). Please try again later.",
+    FailureKind.RATE_LIMIT:
+        "⚠️ The model's rate limit or quota has been reached ({tried}). Please try again later.",
+    FailureKind.AUTH:
+        "⚠️ The model provider rejected the API key or denied access ({tried}). "
+        "A server admin needs to check the bot's model settings.",
+    FailureKind.MODEL_NOT_FOUND:
+        "⚠️ The configured model was not found ({tried}). "
+        "A server admin needs to check the model name in the bot's settings.",
+    FailureKind.CONTEXT_TOO_LONG:
+        "⚠️ This conversation is too long for the model ({tried}). "
+        "Use /newchat to start a fresh conversation.",
+    FailureKind.CONNECTION:
+        "⚠️ Could not reach the model provider ({tried}). Please try again later.",
+    FailureKind.BAD_REQUEST:
+        "⚠️ The model provider rejected the request ({tried}).",
+    FailureKind.UNKNOWN:
+        "⚠️ The model returned an error ({tried}). Please try again later.",
+}
 
 
 async def _current_turn(message_data: dict, mention_map: dict[str, str]) -> tuple[str, Message]:
@@ -104,15 +126,19 @@ async def call_discord_agent(step_input: StepInput) -> StepOutput:
     # duration of the agent run, so a tool's Ctx.from_agent() sees who/where.
     ctx_token = set_request_context(session_state)
     try:
-        response, fallback = await run_with_fallback(agents, route, messages, session_state)
+        result = await run_with_fallback(agents, route, messages, session_state)
     finally:
         reset_request_context(ctx_token)
 
-    if response.status == RunStatus.error:
+    response, fallback = result.response, result.fallback
+
+    if result.failed:
         tried = f"{route.spec.name} and {fallback.name}" if fallback else route.spec.name
-        print(f"❌ [call_discord_agent] All models failed ({tried})")
+        # The last model's error decides the reply; its text is shown as detail.
+        kind = classify_failure(result.error, response.content)
+        print(f"❌ [call_discord_agent] All models failed ({tried}): {kind.value}")
         error_detail = (response.content or "").strip() or None
-        body = f"⚠️ The model is currently overloaded ({tried} unavailable). Please try again later."
+        body = _FAILURE_REPLIES[kind].format(tried=tried)
         if error_detail:
             body += f"\n{error_detail}"
         return StepOutput(

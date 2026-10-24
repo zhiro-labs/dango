@@ -107,6 +107,23 @@ This message is visible to users but is stripped from LLM history so it does not
 
 ---
 
+## The bot replies with a ⚠️ model error
+
+When every model it tried has failed, Dango replies with a `[dango-sysinfo]` note that names the model(s) and says what went wrong, followed by the provider's own error text. The first line tells you where to look:
+
+| Reply starts with | Cause | What to do |
+|---|---|---|
+| `The model is currently overloaded` | Provider returned a 5xx | Wait and retry; set a `DEEP_MODEL` on another provider with `FALLBACK_ON_ERROR=on` to ride out outages |
+| `The model's rate limit or quota has been reached` | 429 / quota exhausted | Wait, or raise the plan limits with your provider |
+| `The model provider rejected the API key or denied access` | Invalid key or no access (401/403) | Fix `FAST_API_KEY` / `DEEP_API_KEY` (Models tab in the dashboard) |
+| `The configured model was not found` | Wrong model name (404) | Check `FAST_MODEL` / `DEEP_MODEL` against the provider's model list |
+| `This conversation is too long for the model` | Input exceeds the context window | Run `/newchat`, or set `CONTEXT_TOKEN_BUDGET` so history is trimmed |
+| `Could not reach the model provider` | Network error or timeout | Check connectivity; for local models, that the server is running at `FAST_BASE_URL` |
+| `The model provider rejected the request` | Other 4xx | Read the provider's error text below the reply |
+| `The model returned an error` | Anything else | Read the provider's error text and the bot logs |
+
+---
+
 ## `CUSTOM_APIS_JSON` tool is not registered
 
 The most common cause is a multi-line JSON value in `.env`. The parser reads the variable as a single line and cannot parse fragmented JSON.

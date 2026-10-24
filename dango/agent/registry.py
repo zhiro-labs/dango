@@ -8,6 +8,7 @@ session_state on each run.
 from dataclasses import dataclass
 
 from agno.agent import Agent
+from agno.models.base import Model
 
 from .instructions import make_instructions
 from .models import DangoGemini, inject_provider_key, make_model
@@ -20,9 +21,9 @@ from .tools import build_tools
 class Agents:
     settings: AgentSettings
     fast: Agent
-    fast_model: DangoGemini | object | str
+    fast_model: Model
     deep: Agent | None
-    deep_model: DangoGemini | object | str | None
+    deep_model: Model | None
 
     @property
     def fast_gemini(self) -> DangoGemini | None:

@@ -15,6 +15,7 @@ import sys
 from types import SimpleNamespace
 
 import aiohttp
+import httpx
 import pytest
 from agno.agent import Agent
 from agno.models.google import Gemini
@@ -69,21 +70,40 @@ def no_custom_extensions(monkeypatch):
 
 @pytest.fixture
 def runs(monkeypatch):
-    """Replace Agent.arun; queue responses in `runs.queue` (default: success)."""
+    """Replace Agent.arun; queue outcomes in `runs.queue` (default: success).
+
+    A queued response is returned as is. A queued exception is raised by the
+    provider inside the agent's model.ainvoke, and the run fails the way Agno
+    reports it: status=error, content=str(exception).
+    """
+    from agno.models.openai import OpenAIResponses
+
     from dango.extensions.context import Ctx
 
-    rec = SimpleNamespace(calls=[], queue=[], sleeps=[])
+    rec = SimpleNamespace(calls=[], queue=[], sleeps=[], raising=None)
 
     async def fake_arun(self, input=None, session_state=None, **kwargs):
         rec.calls.append(SimpleNamespace(
             agent=self, input=input, session_state=session_state, ctx=Ctx.from_agent(),
         ))
-        return rec.queue.pop(0) if rec.queue else _ok()
+        outcome = rec.queue.pop(0) if rec.queue else _ok()
+        if isinstance(outcome, BaseException):
+            rec.raising = outcome
+            try:
+                await self.model.ainvoke(messages=[], assistant_message=None)
+            except Exception as e:
+                return _err(str(e))
+        return outcome
+
+    async def provider_ainvoke(self, *args, **kwargs):
+        raise rec.raising
 
     async def fake_sleep(delay, *args, **kwargs):
         rec.sleeps.append(delay)
 
     monkeypatch.setattr(Agent, "arun", fake_arun)
+    monkeypatch.setattr(Gemini, "ainvoke", provider_ainvoke)
+    monkeypatch.setattr(OpenAIResponses, "ainvoke", provider_ainvoke)
     monkeypatch.setattr(asyncio, "sleep", fake_sleep)
     return rec
 
@@ -599,20 +619,103 @@ class TestRetryAndFallback:
         assert len(runs.calls) == 1
         assert out["error"] is True
 
-    def test_error_reply_names_every_model_tried(self, runs):
-        runs.queue = [_err("503 UNAVAILABLE"), _err("")]
+
+# ── Failure replies ───────────────────────────────────────────────────────────
+
+def _provider_error(message: str, status: int, cause: BaseException | None = None):
+    from agno.exceptions import ModelProviderError
+
+    error = ModelProviderError(message=message, status_code=status)
+    error.__cause__ = cause
+    return error
+
+
+GEMINI_503 = "503 UNAVAILABLE. {'error': {'code': 503, 'message': 'The model is overloaded. Please try again later.'}}"
+
+
+class TestFailureReplies:
+    def test_overloaded_reply_names_every_model_and_shows_detail(self, runs):
+        runs.queue = [_provider_error(GEMINI_503, 503), _provider_error(GEMINI_503, 503)]
         out = run_step({**BASE_ENV, **DEEP_GEMINI, "FALLBACK_ON_ERROR": "on"})
         assert out["error"] is True
         assert out["error_message"] == (
             "> [dango-sysinfo]\n> ⚠️ The model is currently overloaded "
-            "(google:gemini-2.5-flash and google:gemini-2.5-pro unavailable). Please try again later."
-        )
-
-    def test_error_reply_includes_detail(self, runs):
-        runs.queue = [_err("  quota exceeded  ")]
-        out = run_step(BASE_ENV)
-        assert out["error_message"] == (
-            "> [dango-sysinfo]\n> ⚠️ The model is currently overloaded "
-            "(google:gemini-2.5-flash unavailable). Please try again later.\n> quota exceeded"
+            "(google:gemini-2.5-flash and google:gemini-2.5-pro unavailable). Please try again later.\n"
+            f"> {GEMINI_503}"
         )
         assert out["message_data"]["author_name"] == "Alice"
+
+    @pytest.mark.parametrize("error, phrase", [
+        (_provider_error("400 INVALID_ARGUMENT. API key not valid. Please pass a valid API key.", 400),
+         "rejected the API key or denied access"),
+        (_provider_error("403 PERMISSION_DENIED. Your project has been denied access.", 403),
+         "rejected the API key or denied access"),
+        (_provider_error("429 RESOURCE_EXHAUSTED. You exceeded your current quota.", 429),
+         "rate limit or quota has been reached"),
+        (_provider_error("404 NOT_FOUND. models/gemini-9 is not found for API version v1beta.", 404),
+         "configured model was not found"),
+        (_provider_error("500 INTERNAL. An internal error has occurred.", 500),
+         "currently overloaded"),
+        (_provider_error("400 INVALID_ARGUMENT. Request contains an invalid argument.", 400),
+         "provider rejected the request"),
+    ])
+    def test_gemini_errors(self, runs, error, phrase):
+        runs.queue = [error]
+        out = run_step(BASE_ENV)
+        assert phrase in out["error_message"]
+        assert out["error_message"].endswith(f"\n> {error.message}")
+
+    @pytest.mark.parametrize("error, phrase", [
+        (_provider_error("Incorrect API key provided: sk-abc***xyz.", 401),
+         "rejected the API key or denied access"),
+        (_provider_error("You exceeded your current quota, please check your plan.", 429),
+         "rate limit or quota has been reached"),
+        (_provider_error("The model `gpt-9` does not exist or you do not have access to it.", 404),
+         "configured model was not found"),
+        (_provider_error("Connection error.", 502, cause=httpx.ConnectError("connection refused")),
+         "Could not reach the model provider"),
+    ])
+    def test_openai_errors(self, runs, error, phrase):
+        runs.queue = [error, error, error]  # non-Gemini: three attempts
+        out = run_step(OPENAI_FAST)
+        assert len(runs.calls) == 3
+        assert phrase in out["error_message"]
+
+    def test_context_window_exceeded(self, runs):
+        from agno.exceptions import ContextWindowExceededError
+
+        runs.queue = [ContextWindowExceededError(message="This model's maximum context length is 1048576 tokens.")]
+        out = run_step(BASE_ENV)
+        assert "too long for the model (google:gemini-2.5-flash). Use /newchat" in out["error_message"]
+
+    def test_last_model_decides_the_reply(self, runs):
+        runs.queue = [_provider_error(GEMINI_503, 503), _provider_error("API key expired.", 400)]
+        out = run_step({**BASE_ENV, **DEEP_GEMINI, "FALLBACK_ON_ERROR": "on"})
+        assert "rejected the API key or denied access" in out["error_message"]
+        assert "(google:gemini-2.5-flash and google:gemini-2.5-pro)" in out["error_message"]
+
+    def test_only_the_final_attempt_counts(self, runs):
+        runs.queue = [_provider_error("Incorrect API key provided.", 401), _err("boom"), _err("boom")]
+        out = run_step(OPENAI_FAST)
+        # The final attempt failed without a provider exception: classified by its text.
+        assert out["error_message"] == (
+            "> [dango-sysinfo]\n> ⚠️ The model returned an error (openai:gpt-4o). Please try again later.\n> boom"
+        )
+
+    def test_gemini_unreadable_error_is_fixed_before_classifying(self, runs):
+        # Agno bug: Gemini errors can carry a bound-method repr instead of text.
+        cause = RuntimeError("429 RESOURCE_EXHAUSTED. Quota exceeded for metric.")
+        runs.queue = [_provider_error("<bound method ClientResponse.text>", 502, cause=cause)]
+        out = run_step(BASE_ENV)
+        assert "rate limit or quota has been reached" in out["error_message"]
+        assert out["error_message"].endswith("\n> 429 RESOURCE_EXHAUSTED. Quota exceeded for metric.")
+
+    @pytest.mark.parametrize("content, phrase", [
+        ("quota exceeded", "rate limit or quota has been reached"),
+        ("boom", "The model returned an error"),
+        ("", "The model returned an error"),
+    ])
+    def test_failures_without_a_provider_exception_use_text(self, runs, content, phrase):
+        runs.queue = [_err(content)]
+        out = run_step(BASE_ENV)
+        assert phrase in out["error_message"]

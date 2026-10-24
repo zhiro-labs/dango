@@ -3,10 +3,13 @@ Running an agent with retry and cross-model fallback.
 """
 
 import asyncio
+from dataclasses import dataclass
+from typing import Any
 
 from agno.agent import Agent
 from agno.run.base import RunStatus
 
+from .errors import capture_provider_errors
 from .models import DangoGemini
 from .registry import Agents
 from .routing import Route
@@ -15,25 +18,40 @@ from .settings import ModelSpec
 _NON_GEMINI_RETRIES = 2  # mirrors DangoGemini's default model-level retries
 
 
-async def run_with_retry(agent: Agent, messages: list, session_state: dict):
+@dataclass(frozen=True)
+class RunResult:
+    response: Any                  # Agno RunOutput of the last attempt
+    error: BaseException | None    # provider exception behind a failed response, if one was seen
+    fallback: ModelSpec | None     # model tried after the routed one failed
+
+    @property
+    def failed(self) -> bool:
+        return self.response.status == RunStatus.error
+
+
+async def run_with_retry(agent: Agent, messages: list, session_state: dict) -> tuple[Any, BaseException | None]:
     """Run agent.arun with retry for non-Gemini providers.
 
     DangoGemini already retries at model level (retries=2, exponential_backoff).
     All other providers have no built-in retry in Agno, so we add one here.
+    Returns (response, provider exception of the failed final attempt or None).
     """
     is_gemini = isinstance(getattr(agent, "model", None), DangoGemini)
     attempts = 1 if is_gemini else _NON_GEMINI_RETRIES + 1
-    response = None
+    response, error = None, None
 
     for attempt in range(attempts):
-        response = await agent.arun(input=messages, session_state=session_state)
-        if response.status != RunStatus.error or attempt == attempts - 1:
+        with capture_provider_errors() as errors:
+            response = await agent.arun(input=messages, session_state=session_state)
+        failed = response.status == RunStatus.error
+        error = errors[-1] if failed and errors else None
+        if not failed or attempt == attempts - 1:
             break
         delay = 2 ** attempt  # 1 s, 2 s
         print(f"⚡ [arun] non-Gemini error on attempt {attempt + 1}/{attempts - 1}, retrying in {delay}s")
         await asyncio.sleep(delay)
 
-    return response
+    return response, error
 
 
 def _fallback_for(agents: Agents, route: Route) -> Route | None:
@@ -45,20 +63,15 @@ def _fallback_for(agents: Agents, route: Route) -> Route | None:
     return None
 
 
-async def run_with_fallback(
-    agents: Agents, route: Route, messages: list, session_state: dict
-) -> tuple[object, ModelSpec | None]:
-    """Run the routed agent; on error, try the other model if FALLBACK_ON_ERROR.
-
-    Returns (response, fallback spec or None when no fallback ran).
-    """
-    response = await run_with_retry(route.agent, messages, session_state)
+async def run_with_fallback(agents: Agents, route: Route, messages: list, session_state: dict) -> RunResult:
+    """Run the routed agent; on error, try the other model if FALLBACK_ON_ERROR."""
+    response, error = await run_with_retry(route.agent, messages, session_state)
     if not (agents.settings.fallback_on_error and response.status == RunStatus.error):
-        return response, None
+        return RunResult(response, error, None)
 
     fallback = _fallback_for(agents, route)
     if fallback is None:
-        return response, None
+        return RunResult(response, error, None)
     print(f"⚡ [call_discord_agent] {route.spec.name} failed, falling back to {fallback.spec.name}")
-    response = await run_with_retry(fallback.agent, messages, session_state)
-    return response, fallback.spec
+    response, error = await run_with_retry(fallback.agent, messages, session_state)
+    return RunResult(response, error, fallback.spec)

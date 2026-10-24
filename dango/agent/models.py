@@ -3,7 +3,8 @@ Model construction for every supported provider.
 
 Google (Gemini / Gemma) gets a dedicated subclass with Gemini-specific
 parameters; every other provider is resolved through Agno's
-"provider:model_id" string format.
+"provider:model_id" string format. All models record provider errors (see
+errors.py) so a failed run can be explained to the user.
 """
 
 import os
@@ -12,6 +13,7 @@ from agno.exceptions import ModelProviderError
 from agno.models.google import Gemini
 
 from ..utils.config_utils import env_bool
+from .errors import RecordsProviderErrors
 from .settings import ModelSpec
 
 # ── Provider → API key env var ────────────────────────────────────────────────
@@ -77,7 +79,7 @@ def inject_provider_key(spec: ModelSpec) -> None:
 
 
 # ── Gemini subclass ───────────────────────────────────────────────────────────
-class DangoGemini(Gemini):
+class _GeminiWithReadableErrors(Gemini):
     """Gemini with corrected error messages.
 
     Agno bug: ainvoke overwrites the useful str(e) error message with
@@ -98,6 +100,35 @@ class DangoGemini(Gemini):
                     model_id=e.model_id,
                 ) from cause
             raise
+
+
+class DangoGemini(RecordsProviderErrors, _GeminiWithReadableErrors):
+    """Gemini as Dango uses it: readable errors, recorded for failure replies."""
+
+
+# ── Other providers ───────────────────────────────────────────────────────────
+_recording_classes: dict[type, type] = {}
+
+
+def _recording_class(cls: type) -> type:
+    """Same-named subclass of a provider model class that records its errors."""
+    if cls not in _recording_classes:
+        _recording_classes[cls] = type(
+            cls.__name__, (RecordsProviderErrors, cls), {"__module__": __name__, "__doc__": cls.__doc__}
+        )
+    return _recording_classes[cls]
+
+
+def _resolve(spec: ModelSpec):
+    """Resolve 'provider:model_id' like Agno does, as an error-recording model.
+
+    Agno's resolver builds every provider as Cls(id=model_id); we build the
+    recording subclass the same way.
+    """
+    from agno.models.utils import get_model as _agno_get_model
+
+    plain = _agno_get_model(spec.name)
+    return _recording_class(type(plain))(id=plain.id)
 
 
 def _make_gemini(spec: ModelSpec) -> DangoGemini:
@@ -135,19 +166,18 @@ def _make_gemini(spec: ModelSpec) -> DangoGemini:
     )
 
 
-def make_model(spec: ModelSpec) -> DangoGemini | object | str:
-    """Return a model instance, or a string for Agno's model-as-string resolution.
+def make_model(spec: ModelSpec):
+    """Return the model instance for a spec.
 
     - google: → DangoGemini (with Gemini-specific params)
-    - others without base_url → model string (Agno resolves at runtime)
-    - others with base_url → Agno instantiates the class, then base_url/host is patched
+    - others → the class Agno's "provider:model_id" resolution picks, recording
+      its errors; with base_url, the endpoint (base_url/host) is patched in
     """
     if spec.provider == "google":
         return _make_gemini(spec)
 
+    instance = _resolve(spec)
     if spec.base_url:
-        from agno.models.utils import get_model as _agno_get_model
-        instance = _agno_get_model(spec.name)
         if hasattr(instance, "host"):           # Ollama uses 'host'
             instance.host = spec.base_url
         elif hasattr(instance, "base_url"):     # most OpenAI-like providers
@@ -163,6 +193,4 @@ def make_model(spec: ModelSpec) -> DangoGemini | object | str:
             instance.base_url = spec.base_url
         if spec.api_key and hasattr(instance, "api_key"):
             instance.api_key = spec.api_key
-        return instance
-
-    return spec.name
+    return instance
