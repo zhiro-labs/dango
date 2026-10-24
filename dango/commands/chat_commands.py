@@ -13,7 +13,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from ..steps import call_agent as _call_agent_step
+from ..agent import get_agents, list_skill_names
 from ..utils.config_utils import env_onoff_to_bool
 from ..utils.discord_helpers import format_reply_context
 
@@ -359,7 +359,7 @@ class ChatCog(commands.Cog):
         image: discord.Attachment = None,
     ):
         try:
-            if _call_agent_step.deep_agent is None:
+            if get_agents().deep is None:
                 await interaction.response.send_message(
                     "❌ `DEEP_MODEL` is not configured — `/deep` is unavailable.",
                     ephemeral=True,
@@ -473,7 +473,7 @@ class ChatCog(commands.Cog):
         image: discord.Attachment = None,
     ):
         try:
-            available = _call_agent_step.list_skill_names()
+            available = list_skill_names()
             if not available:
                 await interaction.response.send_message(
                     "❌ No skills are available — enable skills and add at least one "
@@ -586,6 +586,6 @@ class ChatCog(commands.Cog):
         cur = current.lower()
         return [
             app_commands.Choice(name=n, value=n)
-            for n in _call_agent_step.list_skill_names()
+            for n in list_skill_names()
             if cur in n.lower()
         ][:25]

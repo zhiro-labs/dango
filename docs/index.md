@@ -174,9 +174,10 @@ dango/                         # repo root
 │   ├── workflow.py            # Agno Workflow definition
 │   ├── steps/                 # 4-step pipeline
 │   │   ├── fetch_history.py
-│   │   ├── call_agent.py      # Multi-provider LLM call
+│   │   ├── call_agent.py      # Runs the agent for one message
 │   │   ├── table_steps.py     # Table → PNG rendering
 │   │   └── send_response.py   # Discord send (split, reply, table images)
+│   ├── agent/                 # Settings, models, tools, skills, routing, retry/fallback
 │   ├── commands/
 │   │   ├── chat_commands.py   # ChatCog: on_message, /newchat, /deep
 │   │   └── admin_commands.py  # AdminCog: all admin slash commands

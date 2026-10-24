@@ -35,7 +35,7 @@ Pulls recent messages from the channel using the Discord API and converts them t
 
 ## Step 2 — LLMChat
 
-**File:** `dango/steps/call_agent.py`
+**File:** `dango/steps/call_agent.py` (the agents themselves — settings, models, tools, skills, routing and retries — live in `dango/agent/`)
 
 Runs the Agno Agent against the formatted history plus the current message. Key behaviours:
 

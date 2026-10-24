@@ -88,12 +88,12 @@ def _save_fingerprint(sys_prompt_path: str, fp: dict[str, float]) -> None:
 
 async def _generate_and_save(save_path: str) -> str:
     """Generate workspace_sys_prompt.txt using a Workspace Agent and save it."""
-    # Lazy import to avoid circular: call_agent → build_instructions → workspace_context
+    # Lazy import to avoid circular: dango.agent → build_instructions → workspace_context
     from agno.tools.workspace import Workspace
-    from ..steps.call_agent import _fast_model  # noqa: PLC0415
+    from ..agent import get_agents  # noqa: PLC0415
 
     agent = Agent(
-        model=_fast_model,
+        model=get_agents().fast_model,
         tools=[Workspace(_root, allowed=["read", "list", "search"])],
         instructions=_META_PROMPT,
         markdown=False,

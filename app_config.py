@@ -15,7 +15,7 @@ def inject_config_to_env() -> str | None:
     """Load data/config.yaml and inject its values into os.environ.
 
     Must be called before any local imports that read os.getenv() at module
-    level (e.g. call_agent.py). Returns the inline chat_sys_prompt if present.
+    level (e.g. chat_commands.py). Returns the inline chat_sys_prompt if present.
     Returns None if data/config.yaml does not exist (developer .env path).
     """
     if not _DATA_CONFIG.exists():

@@ -115,9 +115,9 @@ class TestCreateDiscordWorkflow:
     def test_creates_workflow(self, monkeypatch):
         import dango.workflow as workflow_module
 
-        # FAST_MODEL is read at import time, so patch agent initialization
-        # instead of the environment to keep the test env-independent.
-        monkeypatch.setattr(workflow_module, "_initialize_agents", lambda: None)
+        # Building the agents needs FAST_MODEL; skip it to keep the test
+        # env-independent.
+        monkeypatch.setattr(workflow_module, "get_agents", lambda: None)
 
         wf = workflow_module.create_discord_workflow()
         assert wf is not None
