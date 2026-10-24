@@ -349,6 +349,8 @@ class AdminCog(commands.Cog):
                 ephemeral=True,
             )
             print(f"✅ [sethistorylimit] History limit updated to {limit}")
+        except ValueError as e:
+            await interaction.response.send_message(f"❌ {e}", ephemeral=True)
         except Exception as e:
             print(f"❌ [sethistorylimit] Error setting history limit: {e}")
             await interaction.response.send_message(

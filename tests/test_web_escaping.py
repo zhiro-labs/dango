@@ -6,6 +6,8 @@ Discord server/channel/user names (set by whoever owns that server or account)
 plus values from config.yaml / runtime.yml.
 """
 
+from types import SimpleNamespace
+
 import pytest
 
 from web import main as web_main
@@ -81,7 +83,7 @@ def test_discord_page_renders_names_escaped(monkeypatch):
     }
     monkeypatch.setattr(web_main, "is_setup_complete", lambda: True)
     monkeypatch.setattr(web_main, "load_config", lambda: BotConfig())
-    monkeypatch.setattr(web_main, "_load_runtime", lambda: rt)
+    monkeypatch.setattr(web_main, "_runtime", lambda: SimpleNamespace(snapshot=lambda: rt))
 
     r = TestClient(web_main.app, base_url="http://localhost:17860").get("/discord")
     assert r.status_code == 200

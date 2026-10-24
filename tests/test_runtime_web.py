@@ -148,3 +148,123 @@ class TestBotMutations:
         html = client.get("/discord").text
         assert "[TW] Gaming / #general" in html
         assert ">carol</p>" in html
+
+
+# ── One shared implementation ─────────────────────────────────────────────────
+
+CORRUPT = "allowed_channels:\n  - 111\nchannel_metadata:\n  '111':\n    server: [TW] Gaming\n"
+
+
+class TestSharedFile:
+    def test_bot_change_keeps_dashboard_edits(self, client, workdir):
+        _write(workdir, EXISTING)
+        bot = RuntimeConfig("config/runtime.yml")  # loaded at startup, before the dashboard edit
+        client.post("/api/runtime/channels/add", data={"channel_id": "444"}, headers=ORIGIN)
+        bot.add_channel(555, "Dango HQ", "bots")
+        assert _file(workdir)["allowed_channels"] == [111, 222, 444, 555]
+        assert bot.allowed_channels == {111, 222, 444, 555}
+
+    def test_dashboard_change_keeps_bot_edits(self, client, workdir):
+        _write(workdir, EXISTING)
+        RuntimeConfig("config/runtime.yml").add_user(666, "dave")
+        client.post("/api/runtime/settings", headers=ORIGIN, data={
+            "timezone": "UTC", "discord_activity": "Idle", "history_limit": "5",
+        })
+        data = _file(workdir)
+        assert data["allowed_users"] == [333, 666]
+        assert data["user_metadata"]["666"] == {"username": "dave"}
+
+    def test_both_sides_write_the_same_format(self, client, workdir):
+        _write(workdir, EXISTING)
+        client.post("/api/runtime/channels/add", data={"channel_id": "444"}, headers=ORIGIN)
+        text = (workdir / "config" / "runtime.yml").read_text(encoding="utf-8")
+        assert text.startswith("# Runtime configuration - can be modified via Discord commands\n")
+        assert "  - 111  # Dango HQ / #general\n" in text
+        assert [p.name for p in (workdir / "config").iterdir()] == ["runtime.yml"]  # no temp file left
+
+    def test_bot_remove_channel_drops_metadata(self, workdir):
+        rc = RuntimeConfig("config/runtime.yml")
+        rc.add_channel(1, "S", "c")
+        rc.remove_channel(1)
+        assert _file(workdir)["channel_metadata"] == {}
+
+
+class TestUnreadableFile:
+    @pytest.fixture
+    def corrupt(self, workdir):
+        path = workdir / "config" / "runtime.yml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(CORRUPT, encoding="utf-8")
+        return path
+
+    def test_dashboard_shows_the_error(self, client, corrupt):
+        html = client.get("/discord").text
+        assert "runtime.yml is not valid YAML" in html
+
+    @pytest.mark.parametrize("path, data", [
+        ("/api/runtime/channels/add", {"channel_id": "444"}),
+        ("/api/runtime/channels/111/delete", {}),
+        ("/api/runtime/users/add", {"user_id": "555"}),
+        ("/api/runtime/settings", {"timezone": "UTC", "discord_activity": "x", "history_limit": "5"}),
+    ])
+    def test_dashboard_never_overwrites_it(self, client, corrupt, path, data):
+        r = client.post(path, data=data, headers=ORIGIN)
+        assert "not valid YAML" in r.text
+        assert corrupt.read_text(encoding="utf-8") == CORRUPT
+
+    def test_bot_reports_it_on_first_use_not_on_import(self, corrupt):
+        from dango.utils.runtime_config import RuntimeConfigError
+
+        rc = RuntimeConfig("config/runtime.yml")  # must not raise
+        with pytest.raises(RuntimeConfigError, match="not valid YAML"):
+            rc.allowed_channels
+
+    def test_bot_keeps_last_good_values_and_refuses_to_save(self, workdir):
+        from dango.utils.runtime_config import RuntimeConfigError
+
+        _write(workdir, EXISTING)
+        rc = RuntimeConfig("config/runtime.yml")
+        (workdir / "config" / "runtime.yml").write_text(CORRUPT, encoding="utf-8")
+        with pytest.raises(RuntimeConfigError):
+            rc.add_channel(444)
+        assert (workdir / "config" / "runtime.yml").read_text(encoding="utf-8") == CORRUPT
+        assert rc.allowed_channels == {111, 222}
+
+
+class TestValidation:
+    @pytest.mark.parametrize("form, message", [
+        ({"timezone": "Taipei"}, "Unknown timezone &#x27;Taipei&#x27;"),
+        ({"discord_activity": "x" * 129}, "at most 128 characters"),
+        ({"history_limit": "0"}, "History limit must be at least 1."),
+        ({"history_limit": "abc"}, "History limit must be a whole number."),
+    ])
+    def test_dashboard_rejects_bad_settings(self, client, workdir, form, message):
+        _write(workdir, EXISTING)
+        data = {"timezone": "UTC", "discord_activity": "ok", "history_limit": "5", **form}
+        r = client.post("/api/runtime/settings", data=data, headers=ORIGIN)
+        assert message in r.text
+        saved = _file(workdir)
+        assert (saved["timezone"], saved["discord_activity"], saved["history_limit"]) == ("Asia/Taipei", "Coding", 20)
+
+    def test_bot_setters_validate_too(self, workdir):
+        rc = RuntimeConfig("config/runtime.yml")
+        for call in (lambda: rc.set_timezone("Mars/Base"),
+                     lambda: rc.set_discord_activity("x" * 129),
+                     lambda: rc.set_history_limit(0)):
+            with pytest.raises(ValueError):
+                call()
+        assert (rc.timezone, rc.history_limit) == ("UTC", 12)
+
+    def test_sethistorylimit_reports_the_rule(self, workdir):
+        import asyncio
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from dango.commands.admin_commands import AdminCog
+
+        cog = AdminCog(SimpleNamespace(), RuntimeConfig("config/runtime.yml"))
+        interaction = SimpleNamespace(guild=object(), response=SimpleNamespace(send_message=AsyncMock()))
+        asyncio.run(AdminCog.sethistorylimit.callback(cog, interaction, limit=0))
+        interaction.response.send_message.assert_awaited_once_with(
+            "❌ History limit must be at least 1.", ephemeral=True
+        )

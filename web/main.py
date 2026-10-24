@@ -7,11 +7,14 @@ from contextlib import asynccontextmanager
 from html import escape
 from pathlib import Path
 
+from collections.abc import Callable
+
 import httpx
-import yaml
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
+
+from dango.utils.runtime_config import DEFAULT_SETTINGS, RuntimeConfig, RuntimeConfigError
 
 from . import docker_api
 from .config_store import is_setup_complete, load_config, save_config
@@ -26,33 +29,31 @@ _RUNTIME_PATH = _CONFIG_DIR / "runtime.yml"
 
 
 # ── Runtime config helpers ─────────────────────────────────────────────────────
+# runtime.yml is shared with the bot process. Both edit it through the bot's
+# RuntimeConfig, which re-reads the file before every change.
 
-def _load_runtime() -> dict:
-    if not _RUNTIME_PATH.exists():
-        return {"allowed_channels": [], "allowed_users": [], "channel_metadata": {},
-                "user_metadata": {}, "timezone": "UTC", "discord_activity": "Surfing",
-                "history_limit": 12}
+_EMPTY_RUNTIME = {
+    "allowed_channels": [], "allowed_users": [], "channel_metadata": {}, "user_metadata": {},
+    **DEFAULT_SETTINGS,
+}
+
+
+def _runtime() -> RuntimeConfig:
+    return RuntimeConfig(str(_RUNTIME_PATH))
+
+
+def _runtime_error(error: Exception) -> str:
+    return f'<span class="text-error text-xs">{_esc(error)}</span>'
+
+
+def _change_runtime(change: Callable[[RuntimeConfig], object], render: Callable[[dict], str]) -> str:
+    """Apply a change to runtime.yml and render the updated list (or the error)."""
     try:
-        data = yaml.safe_load(_RUNTIME_PATH.read_text(encoding="utf-8")) or {}
-    except Exception:
-        data = {}
-    return {
-        "allowed_channels": list(data.get("allowed_channels") or []),
-        "allowed_users":    list(data.get("allowed_users") or []),
-        "channel_metadata": dict(data.get("channel_metadata") or {}),
-        "user_metadata":    dict(data.get("user_metadata") or {}),
-        "timezone":         str(data.get("timezone") or "UTC"),
-        "discord_activity": str(data.get("discord_activity") or "Surfing"),
-        "history_limit":    int(data.get("history_limit") or 12),
-    }
-
-
-def _save_runtime(data: dict):
-    _RUNTIME_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _RUNTIME_PATH.write_text(
-        yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False),
-        encoding="utf-8",
-    )
+        rc = _runtime()
+        change(rc)
+        return render(rc.snapshot())
+    except RuntimeConfigError as e:
+        return _runtime_error(e)
 
 
 def _esc(value) -> str:
@@ -205,12 +206,18 @@ async def discord_page(request: Request):
     if not is_setup_complete():
         return RedirectResponse("/setup")
     config = load_config()
-    rt = _load_runtime()
+    try:
+        rt = _runtime().snapshot()
+        channel_list, user_list = _render_channel_list(rt), _render_user_list(rt)
+    except RuntimeConfigError as e:
+        # Show the problem instead of an empty list that a save would then write.
+        rt = _EMPTY_RUNTIME
+        channel_list = user_list = f'<p class="text-sm text-error py-3">{_esc(e)}</p>'
     return templates.TemplateResponse(
         request, "discord.html",
         _ctx("discord", config=config.model_dump(), rt=rt,
-             channel_list=_render_channel_list(rt),
-             user_list=_render_user_list(rt)),
+             channel_list=channel_list,
+             user_list=user_list),
     )
 
 
@@ -554,14 +561,18 @@ async def save_runtime_settings(
     discord_activity: str = Form(""),
     history_limit: str = Form("12"),
 ):
-    rt = _load_runtime()
-    rt["timezone"] = timezone.strip() or "UTC"
-    rt["discord_activity"] = discord_activity.strip()
     try:
-        rt["history_limit"] = int(history_limit)
+        limit = int(history_limit)
     except ValueError:
-        rt["history_limit"] = 6
-    _save_runtime(rt)
+        return '<span class="text-error text-xs">History limit must be a whole number.</span>'
+    try:
+        _runtime().update_settings(
+            timezone=timezone.strip() or "UTC",
+            discord_activity=discord_activity.strip(),
+            history_limit=limit,
+        )
+    except (ValueError, RuntimeConfigError) as e:
+        return _runtime_error(e)
     return _SAVED_R
 
 
@@ -571,20 +582,12 @@ async def add_runtime_channel(channel_id: str = Form(...)):
         ch = int(channel_id.strip())
     except ValueError:
         return '<span class="text-error text-xs">Invalid channel ID</span>'
-    rt = _load_runtime()
-    if ch not in rt["allowed_channels"]:
-        rt["allowed_channels"].append(ch)
-    _save_runtime(rt)
-    return _render_channel_list(rt)
+    return _change_runtime(lambda rc: rc.add_channel(ch), _render_channel_list)
 
 
 @app.post("/api/runtime/channels/{channel_id}/delete", response_class=HTMLResponse)
 async def delete_runtime_channel(channel_id: int):
-    rt = _load_runtime()
-    rt["allowed_channels"] = [c for c in rt["allowed_channels"] if c != channel_id]
-    rt["channel_metadata"].pop(str(channel_id), None)
-    _save_runtime(rt)
-    return _render_channel_list(rt)
+    return _change_runtime(lambda rc: rc.remove_channel(channel_id), _render_channel_list)
 
 
 @app.post("/api/runtime/users/add", response_class=HTMLResponse)
@@ -593,20 +596,12 @@ async def add_runtime_user(user_id: str = Form(...)):
         uid = int(user_id.strip())
     except ValueError:
         return '<span class="text-error text-xs">Invalid user ID</span>'
-    rt = _load_runtime()
-    if uid not in rt["allowed_users"]:
-        rt["allowed_users"].append(uid)
-    _save_runtime(rt)
-    return _render_user_list(rt)
+    return _change_runtime(lambda rc: rc.add_user(uid), _render_user_list)
 
 
 @app.post("/api/runtime/users/{user_id}/delete", response_class=HTMLResponse)
 async def delete_runtime_user(user_id: int):
-    rt = _load_runtime()
-    rt["allowed_users"] = [u for u in rt["allowed_users"] if u != user_id]
-    rt["user_metadata"].pop(str(user_id), None)
-    _save_runtime(rt)
-    return _render_user_list(rt)
+    return _change_runtime(lambda rc: rc.remove_user(user_id), _render_user_list)
 
 
 @app.post("/api/workspace-prompt", response_class=HTMLResponse)
