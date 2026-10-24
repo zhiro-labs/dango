@@ -4,6 +4,7 @@ import re
 import signal
 import tomllib
 from contextlib import asynccontextmanager
+from html import escape
 from pathlib import Path
 
 import httpx
@@ -54,6 +55,16 @@ def _save_runtime(data: dict):
     )
 
 
+def _esc(value) -> str:
+    """HTML-escape a value for the hand-built fragments below.
+
+    Unlike Jinja templates these f-strings are not auto-escaped, and they show
+    data from outside the dashboard: Discord server/channel/user names and
+    whatever is in config.yaml or runtime.yml.
+    """
+    return escape("" if value is None else str(value))
+
+
 def _render_channel_list(rt: dict) -> str:
     channels = rt.get("allowed_channels") or []
     meta     = rt.get("channel_metadata") or {}
@@ -62,14 +73,14 @@ def _render_channel_list(rt: dict) -> str:
     rows = ""
     for ch in channels:
         m = meta.get(str(ch), {})
-        label = f"{m.get('server', '')} / #{m.get('channel', '')}" if m else ""
+        label = _esc(f"{m.get('server', '')} / #{m.get('channel', '')}") if m else ""
         rows += f"""
 <div class="flex justify-between items-center py-2.5 border-b border-base-200 last:border-0">
   <div>
-    <p class="text-sm font-mono">{ch}</p>
+    <p class="text-sm font-mono">{_esc(ch)}</p>
     {"" if not label else f'<p class="text-xs text-base-content/45">{label}</p>'}
   </div>
-  <form hx-post="/api/runtime/channels/{ch}/delete" hx-target="#channel-list" hx-swap="innerHTML">
+  <form hx-post="/api/runtime/channels/{_esc(ch)}/delete" hx-target="#channel-list" hx-swap="innerHTML">
     <button type="submit" class="btn btn-ghost btn-xs text-error">Remove</button>
   </form>
 </div>"""
@@ -84,14 +95,14 @@ def _render_user_list(rt: dict) -> str:
     rows = ""
     for uid in users:
         m = meta.get(str(uid), {})
-        label = m.get("username") or m.get("name") or ""
+        label = _esc(m.get("username") or m.get("name") or "")
         rows += f"""
 <div class="flex justify-between items-center py-2.5 border-b border-base-200 last:border-0">
   <div>
-    <p class="text-sm font-mono">{uid}</p>
+    <p class="text-sm font-mono">{_esc(uid)}</p>
     {"" if not label else f'<p class="text-xs text-base-content/45">{label}</p>'}
   </div>
-  <form hx-post="/api/runtime/users/{uid}/delete" hx-target="#user-list" hx-swap="innerHTML">
+  <form hx-post="/api/runtime/users/{_esc(uid)}/delete" hx-target="#user-list" hx-swap="innerHTML">
     <button type="submit" class="btn btn-ghost btn-xs text-error">Remove</button>
   </form>
 </div>"""
@@ -260,7 +271,7 @@ async def get_logs():
 
 def _status_pill(color: str, label: str, pulse: bool = False) -> str:
     dot = f'<span class="status-dot{"  animate-pulse" if pulse else ""}"></span>'
-    return f'<span class="status-pill s-{color}">{dot}{label}</span>'
+    return f'<span class="status-pill s-{color}">{dot}{_esc(label)}</span>'
 
 
 _STATE_PILL = {
@@ -351,7 +362,7 @@ async def validate_discord(token: str = Form(...)):
             )
             if r.status_code == 200:
                 name = r.json().get("username", "Bot")
-                return f'<span class="badge badge-success gap-1">✓ {name}</span>'
+                return f'<span class="badge badge-success gap-1">✓ {_esc(name)}</span>'
             return '<span class="badge badge-error gap-1">✗ Invalid token</span>'
         except httpx.RequestError:
             return '<span class="badge badge-error gap-1">✗ Connection failed</span>'
@@ -617,12 +628,12 @@ def _render_api_list(apis: list) -> str:
         return '<p class="text-sm text-base-content/40 py-3 text-center">No APIs added yet</p>'
     rows = ""
     for i, a in enumerate(apis):
-        desc = a.get("description", "")
+        desc = _esc(a.get("description", ""))
         rows += f"""
 <div class="flex justify-between items-center py-3 border-b border-base-200 last:border-0">
   <div>
-    <p class="text-sm font-medium">{a.get("name", "")}</p>
-    <p class="text-xs text-base-content/45 font-mono">{a.get("base_url", "")}</p>
+    <p class="text-sm font-medium">{_esc(a.get("name", ""))}</p>
+    <p class="text-xs text-base-content/45 font-mono">{_esc(a.get("base_url", ""))}</p>
     {"" if not desc else f'<p class="text-xs text-base-content/55 mt-0.5">{desc}</p>'}
   </div>
   <form hx-post="/api/config/tools/api/{i}/delete" hx-target="#api-list" hx-swap="innerHTML">
@@ -638,12 +649,12 @@ def _render_db_list(dbs: list) -> str:
     rows = ""
     for i, d in enumerate(dbs):
         display_url = re.sub(r"://([^:]+):([^@]+)@", r"://\1:***@", d.get("db_url", ""))
-        desc = d.get("description", "")
+        desc = _esc(d.get("description", ""))
         rows += f"""
 <div class="flex justify-between items-center py-3 border-b border-base-200 last:border-0">
   <div>
-    <p class="text-sm font-medium">{d.get("name", "")}</p>
-    <p class="text-xs text-base-content/45 font-mono">{display_url}</p>
+    <p class="text-sm font-medium">{_esc(d.get("name", ""))}</p>
+    <p class="text-xs text-base-content/45 font-mono">{_esc(display_url)}</p>
     {"" if not desc else f'<p class="text-xs text-base-content/55 mt-0.5">{desc}</p>'}
   </div>
   <form hx-post="/api/config/tools/db/{i}/delete" hx-target="#db-list" hx-swap="innerHTML">
