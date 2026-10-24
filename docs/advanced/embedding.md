@@ -35,6 +35,8 @@ uv add git+https://github.com/zhiro-labs/dango     # uv
 pip install git+https://github.com/zhiro-labs/dango # pip
 ```
 
+Dango supports Python 3.12–3.14; the upper bound comes from LiteLLM, one of the bundled model providers. With uv, your project's `requires-python` must fall inside that range (for example `requires-python = ">=3.12,<3.15"`), otherwise the resolver reports that dango cannot be used.
+
 ## Minimal integration
 
 Dango reads environment variables **at import time**, so `load_dotenv()` must run

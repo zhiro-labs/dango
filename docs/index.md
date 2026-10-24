@@ -74,7 +74,7 @@ You need:
 | Method | Also requires |
 |---|---|
 | **Docker** (recommended) | [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Mac/Windows), [OrbStack](https://orbstack.dev) (Mac), or [Docker Engine](https://docs.docker.com/engine/install/) (Linux) |
-| **uv** (developers) | Python 3.12+, [uv](https://github.com/astral-sh/uv) |
+| **uv** (developers) | Python 3.12–3.14, [uv](https://github.com/astral-sh/uv) |
 
 ## Quick Start
 

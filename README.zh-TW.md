@@ -42,7 +42,7 @@ Gemini、GPT-4o、Claude、Llama、本地 Ollama——通通支援，換模型�
 | 安裝方式 | 額外需求 |
 |---|---|
 | Docker（推薦） | [Docker Desktop](https://www.docker.com/products/docker-desktop/)（Mac/Windows）、[OrbStack](https://orbstack.dev)（Mac）或 [Docker Engine](https://docs.docker.com/engine/install/)（Linux） |
-| uv（開發者 / 低規格機器） | Python 3.12+、[uv](https://docs.astral.sh/uv/getting-started/installation/) |
+| uv（開發者 / 低規格機器） | Python 3.12–3.14、[uv](https://docs.astral.sh/uv/getting-started/installation/) |
 
 ## Discord 應用程式設定
 

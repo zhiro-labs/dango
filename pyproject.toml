@@ -6,31 +6,38 @@ build-backend = "hatchling.build"
 name = "dango"
 version = "0.1.0"
 description = "Discord AI Agent"
-requires-python = ">=3.12"
+# The upper bound comes from litellm (agno[litellm]), whose releases declare
+# support only up to the Python versions they have been tested on.
+requires-python = ">=3.12,<3.15"
+# Version ranges:
+#   lower bound = the version CI tests (and never one with a known advisory);
+#   upper bound = the next major (or 1.0 for 0.x packages), so
+#   `uv lock --upgrade` picks up fixes and features on its own while a major
+#   upgrade stays a deliberate one-line change, checked by CI.
 dependencies = [
-    "agno[anthropic,aws-bedrock,azure,cerebras,cohere,google,groq,ibm,litellm,ollama,openai,portkey]>=2.6.9",
-    "aiohttp>=3.13.5",
-    "beautifulsoup4>=4.14.3",
-    "ddgs>=9.14.4",
-    "discord-py>=2.6.0",
-    "fastapi>=0.136.3",
-    "httpx>=0.28.1",
-    "jinja2>=3.1.6",
-    "pillow>=11.3.0",
-    "psycopg2-binary>=2.9.12",
-    "pydantic>=2.13.4",
-    "pymysql>=1.2.0",
-    "python-dotenv>=1.1.1",
-    "python-multipart>=0.0.30",
-    "pyyaml>=6.0.2",
-    "requests>=2.32.5",
-    "sqlalchemy>=2.0.50",
-    "starlette>=1.2.1",
-    "tzdata>=2025.2",
-    "uvicorn>=0.48.0",
+    "agno[anthropic,aws-bedrock,azure,cerebras,cohere,google,groq,ibm,litellm,ollama,openai,portkey]>=3.1.10,<4",
+    "aiohttp>=3.14.5,<4",
+    "beautifulsoup4>=4.15.0,<5",
+    "ddgs>=9.16.1,<10",
+    "discord-py>=2.7.1,<3",
+    "fastapi>=0.162.0,<1",
+    "httpx>=0.28.1,<1",
+    "jinja2>=3.1.6,<4",
+    "pillow>=13.0.0,<14",
+    "psycopg2-binary>=2.9.13,<3",
+    "pydantic>=2.14.1,<3",
+    "pymysql>=1.2.3,<2",
+    "python-dotenv>=1.2.4,<2",
+    "python-multipart>=0.0.32,<1",
+    "pyyaml>=6.0.3,<7",
+    "requests>=2.34.2,<3",
+    "sqlalchemy>=2.1.6,<3",
+    "starlette>=1.9.0,<2",
+    "tzdata>=2026.5",
+    "uvicorn>=0.54.0,<1",
 ]
 
 [dependency-groups]
 dev = [
-    "pytest>=9.0.3",
+    "pytest>=9.1.1,<10",
 ]

@@ -42,7 +42,7 @@ You'll need:
 | Method | Extra requirements |
 |---|---|
 | Docker (recommended) | [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Mac/Windows), [OrbStack](https://orbstack.dev) (Mac), or [Docker Engine](https://docs.docker.com/engine/install/) (Linux) |
-| uv (developers / low-spec machines) | Python 3.12+, [uv](https://docs.astral.sh/uv/getting-started/installation/) |
+| uv (developers / low-spec machines) | Python 3.12–3.14, [uv](https://docs.astral.sh/uv/getting-started/installation/) |
 
 ## Discord Application Setup
 

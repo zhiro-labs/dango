@@ -14,7 +14,7 @@ The uv path is for developers or anyone who prefers running the bot directly wit
 
 ## Prerequisites
 
-- Python 3.12+
+- Python 3.12–3.14
 - [uv](https://github.com/astral-sh/uv) — install with `curl -LsSf https://astral.sh/uv/install.sh | sh` (Mac/Linux)
 - A Discord bot token — see [Discord Setup](discord-setup.md)
 - An API key for your chosen model provider
