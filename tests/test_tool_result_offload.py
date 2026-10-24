@@ -280,12 +280,26 @@ class TestDashboard:
         config = load_config()
         assert (config.tool_result_offload_chars, config.context_token_budget) == ("9000", "4096")
 
-    def test_empty_means_default(self, dashboard):
+    def test_clearing_a_field_goes_back_to_the_default(self, dashboard):
         import app_config
+        from web.config_store import load_config
 
+        dashboard.post("/api/config/advanced", headers=ORIGIN, data={"tool_result_offload_chars": "9000"})
         dashboard.post("/api/config/advanced", headers=ORIGIN, data={
             "tool_result_offload_chars": "", "tool_result_ttl_seconds": "",
         })
+        assert load_config().tool_result_offload_chars == ""
         app_config.inject_config_to_env()
         assert "TOOL_RESULT_OFFLOAD_CHARS" not in os.environ
         assert load_settings().tool_result_offload_chars == 16_000
+
+    def test_empty_context_budget_stays_empty(self, dashboard):
+        """It used to be saved as 8192, silently trimming history to 8192 tokens."""
+        from web.config_store import load_config
+
+        dashboard.post("/api/config/advanced", headers=ORIGIN, data={
+            "context_token_budget": "", "fast_context_token_budget": "", "deep_context_token_budget": "",
+        })
+        config = load_config()
+        assert (config.context_token_budget, config.fast_context_token_budget,
+                config.deep_context_token_budget) == ("", "", "")

@@ -520,31 +520,29 @@ async def save_google_settings(
     return _SAVED_R
 
 
+_BUDGET_FIELDS = ("context_token_budget", "fast_context_token_budget", "deep_context_token_budget")
+_TOOL_RESULT_FIELDS = ("tool_result_offload_chars", "tool_result_ttl_seconds")
+
+
 @app.post("/api/config/advanced", response_class=HTMLResponse)
-async def save_advanced(
-    context_token_budget: str = Form("8192"),
-    fast_context_token_budget: str = Form(""),
-    deep_context_token_budget: str = Form(""),
-    tool_result_offload_chars: str | None = Form(None),
-    tool_result_ttl_seconds: str | None = Form(None),
-):
-    # Only update the tool-result fields when the form sends them.
-    tool_fields = {
-        "tool_result_offload_chars": tool_result_offload_chars,
-        "tool_result_ttl_seconds": tool_result_ttl_seconds,
+async def save_advanced(request: Request):
+    # Read the raw form: FastAPI treats an empty field as missing and swaps in
+    # the parameter default, so a cleared field could never be saved empty
+    # ("use the default"). Fields the form does not send are left unchanged.
+    form = await request.form()
+    values = {
+        name: str(form[name]).strip()
+        for name in (*_BUDGET_FIELDS, *_TOOL_RESULT_FIELDS)
+        if name in form
     }
-    for name, value in tool_fields.items():
-        text = (value or "").strip()
+    for name in _TOOL_RESULT_FIELDS:
+        text = values.get(name, "")
         if text and not (text.isascii() and text.isdigit()):
             return f'<span class="text-error text-xs">{_esc(name)} must be a whole number of 0 or more (or empty for the default).</span>'
 
     config = load_config()
-    config.context_token_budget = context_token_budget
-    config.fast_context_token_budget = fast_context_token_budget
-    config.deep_context_token_budget = deep_context_token_budget
-    for name, value in tool_fields.items():
-        if value is not None:
-            setattr(config, name, value.strip())
+    for name, value in values.items():
+        setattr(config, name, value)
     save_config(config)
     return _SAVED_R
 
