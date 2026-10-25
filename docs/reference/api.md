@@ -86,13 +86,26 @@ positional (`@command("name")`), or keyword (`@command(name=..., description=...
 
 | Decorator | Discord slash command | Agent tool |
 |---|:---:|:---:|
-| `command(name=None, description="")` | ✅ | ❌ |
-| `agent_tool(name=None, description="")` | ❌ | ✅ |
-| `command_and_tool(name=None, description="")` | ✅ | ✅ |
+| `command(name=None, description="", *, requires_permissions=None)` | ✅ | ❌ |
+| `agent_tool(name=None, description="", *, requires_permissions=None, **tool_options)` | ❌ | ✅ |
+| `command_and_tool(name=None, description="", *, requires_permissions=None, **tool_options)` | ✅ | ✅ |
 
 When `name` is omitted the function name is used; when `description` is omitted
 the first line of the docstring is used. A leading `ctx` parameter is optional
 and is stripped from the public command/tool schema.
+
+- `requires_permissions`: a discord.py permission name or a list of them
+  (e.g. `"manage_guild"`). The caller must hold all of them, checked on every
+  call from the agent and from Discord. Unknown names raise `ValueError`.
+- `**tool_options`: passed to Agno's `@tool` — `show_result`,
+  `stop_after_tool_call`, `instructions`, `add_instructions`, `pre_hook`,
+  `post_hook`, `tool_hooks`, `cache_results`, `cache_dir`, `cache_ttl`, `title`,
+  `annotations`, `strict`. Human-in-the-loop options and `cache_results`
+  combined with `ctx` or `requires_permissions` raise `ValueError`; other names
+  raise `TypeError`.
+
+See [Restricting who can call a function](../features/extensions.md#restricting-who-can-call-a-function)
+and [Agno tool options](../features/extensions.md#agno-tool-options).
 
 ### `register_tools(*tools)`
 

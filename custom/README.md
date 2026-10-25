@@ -45,6 +45,22 @@ exposure is always an explicit, per-function opt-in.
   and how to call your tool.
 - `async def` and `def` are both supported.
 
+## Restricting access and Agno options
+
+```python
+@agent_tool(name="delete_event", requires_permissions="manage_events")
+async def delete_event(ctx: Ctx, title: str) -> str: ...
+```
+
+- `requires_permissions` (all three decorators): Discord permission name(s)
+  the caller must hold, checked on every call from chat and from Discord.
+- `@agent_tool` / `@command_and_tool` pass other keyword arguments to Agno's
+  `@tool` (`show_result`, `tool_hooks`, `cache_results`, …). Human-in-the-loop
+  options such as `requires_confirmation` are rejected: the Discord flow never
+  resumes a paused run.
+
+Details: `docs/features/extensions.md`.
+
 ## Notes
 
 - A missing or broken file is logged and skipped; it never crashes the bot.

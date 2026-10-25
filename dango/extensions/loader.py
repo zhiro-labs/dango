@@ -16,7 +16,7 @@ import importlib.util
 import inspect
 import os
 from pathlib import Path
-from typing import Any, Callable, get_type_hints
+from typing import Any, Callable, Optional, get_type_hints
 
 from .context import Ctx
 from .registry import ExtensionSpec, command_specs, raw_tools, tool_specs
@@ -77,30 +77,73 @@ def _resolved_hints(fn: Callable) -> dict[str, Any]:
         return {}
 
 
+# ── Permission checks ────────────────────────────────────────────────────────
+def _missing_permissions(spec: ExtensionSpec, ctx: Ctx) -> list[str]:
+    """The required permissions the caller lacks (empty when allowed).
+
+    ctx.author_permissions comes from the Discord message or interaction, never
+    from the model, so the model cannot talk its way past this check. It is
+    discord.py's guild_permissions, which already counts server owners and
+    administrators as holding every permission.
+    """
+    held = set(ctx.author_permissions)
+    return [p for p in spec.requires_permissions if p not in held]
+
+
+def _denied_text(spec: ExtensionSpec, missing: list[str], ctx: Ctx) -> str:
+    needed = ", ".join(missing)
+    if ctx.guild_id is None:
+        return (
+            f"Permission denied: '{spec.name}' needs the Discord permission(s) {needed}, "
+            "which only exist in a server, so it cannot be used in direct messages."
+        )
+    return (
+        f"Permission denied: '{spec.name}' needs the Discord permission(s) {needed}, "
+        f"which {ctx.author_name} does not have."
+    )
+
+
 # ── Agent tools ──────────────────────────────────────────────────────────────
 def _make_tool_wrapper(spec: ExtensionSpec) -> Callable:
     """Wrap a custom function as a clean callable for Agno's @tool.
 
     The wrapper exposes only the user's own parameters (a leading ``ctx`` is
-    removed) and sources Ctx from the request ContextVar at call time.
+    removed), sources Ctx from the request ContextVar at call time, and refuses
+    the call when the caller lacks spec.requires_permissions.
     """
     fn = spec.fn
     _, user_params, has_ctx = _split_ctx(fn)
     hints = _resolved_hints(fn)
+    gated = bool(spec.requires_permissions)
+
+    def _prepare() -> tuple[Optional[str], tuple]:
+        """(refusal text or None, leading args for fn)."""
+        if not (has_ctx or gated):
+            return None, ()
+        ctx = Ctx.from_agent()
+        missing = _missing_permissions(spec, ctx) if gated else []
+        if missing:
+            print(f"⛔ [custom] tool '{spec.name}' refused for {ctx.author_name}: missing {missing}")
+            # Told to the model, which explains it to the user. Not an exception,
+            # so the run treats it as an answer rather than a tool failure.
+            return _denied_text(spec, missing, ctx) + " The action was not performed.", ()
+        return None, ((ctx,) if has_ctx else ())
 
     is_async = inspect.iscoroutinefunction(fn)
     if is_async:
         @functools.wraps(fn)
         async def wrapper(*args, **kwargs):
-            if has_ctx:
-                return await fn(Ctx.from_agent(), *args, **kwargs)
-            return await fn(*args, **kwargs)
+            refusal, lead = _prepare()
+            if refusal is not None:
+                return refusal
+            return await fn(*lead, *args, **kwargs)
     else:
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
-            if has_ctx:
-                return fn(Ctx.from_agent(), *args, **kwargs)
-            return fn(*args, **kwargs)
+            refusal, lead = _prepare()
+            if refusal is not None:
+                return refusal
+            return fn(*lead, *args, **kwargs)
 
     # Present only the user params to Agno's signature/type-hint introspection.
     wrapper.__signature__ = inspect.Signature(parameters=user_params)
@@ -132,7 +175,13 @@ def get_custom_tools() -> list:
         for spec in specs:
             wrapper = _make_tool_wrapper(spec)
             try:
-                tools.append(tool(name=spec.name, description=spec.description or None)(wrapper))
+                tools.append(
+                    tool(
+                        name=spec.name,
+                        description=spec.description or None,
+                        **spec.tool_options,
+                    )(wrapper)
+                )
             except Exception as e:
                 print(f"⚠️  [custom] could not register tool '{spec.name}': {e}")
 
@@ -154,6 +203,11 @@ def _make_app_command(spec: ExtensionSpec):
 
     async def callback(interaction: "discord.Interaction", **kwargs):
         ctx = Ctx.from_interaction(interaction, getattr(interaction, "client", None))
+        missing = _missing_permissions(spec, ctx)
+        if missing:
+            print(f"⛔ [custom] command '{spec.name}' refused for {ctx.author_name}: missing {missing}")
+            await interaction.response.send_message(f"⛔ {_denied_text(spec, missing, ctx)}", ephemeral=True)
+            return
         try:
             await interaction.response.defer()
             if is_async:
@@ -190,7 +244,14 @@ def _make_app_command(spec: ExtensionSpec):
     callback.__name__ = spec.name
 
     description = (spec.description or "Custom command").strip()[:100]
-    return app_commands.Command(name=spec.name.lower(), description=description, callback=callback)
+    cmd = app_commands.Command(name=spec.name.lower(), description=description, callback=callback)
+    if spec.requires_permissions:
+        # Discord hides the command from members without these permissions and
+        # from DMs. Server admins can change who sees it under Integrations, so
+        # the check in callback stays the one that decides.
+        cmd.default_permissions = discord.Permissions(**{p: True for p in spec.requires_permissions})
+        app_commands.guild_only(cmd)
+    return cmd
 
 
 def register_custom_commands(bot) -> int:

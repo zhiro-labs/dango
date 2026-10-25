@@ -34,6 +34,37 @@ def whoami(ctx: Ctx) -> str:
     )
 
 
+# ── Limit a tool to members with a Discord permission ────────────────────────
+# requires_permissions is checked on every call, before the function runs. The
+# caller's permissions come from Discord, not from the model. When they are
+# missing the function is not called and the model is told why. Names are
+# discord.py's: "manage_guild" is "Manage Server" in Discord.
+@agent_tool(name="announce", requires_permissions="manage_guild")
+def announce(ctx: Ctx, text: str) -> str:
+    """Format a server-wide announcement. Only server managers may use it.
+
+    Args:
+        text: The announcement text.
+    """
+    return f"📢 Announcement from {ctx.author_name}: {text}"
+
+
+# ── Agno @tool options pass through ───────────────────────────────────────────
+# Other keyword arguments go to Agno's @tool, e.g. show_result, tool_hooks,
+# stop_after_tool_call or cache_results. Human-in-the-loop options such as
+# requires_confirmation are rejected: the Discord flow never resumes a paused
+# run. cache_results is only allowed without ctx/requires_permissions, because
+# the cache key ignores who is asking.
+@agent_tool(name="char_table", cache_results=True, cache_ttl=3600)
+def char_table(text: str) -> str:
+    """Show the Unicode code point of each character in a short text.
+
+    Args:
+        text: The text to inspect (keep it short).
+    """
+    return "\n".join(f"{ch!r}: U+{ord(ch):04X}" for ch in text[:50])
+
+
 # ── Async tools and external calls work too ──────────────────────────────────
 # @agent_tool()
 # async def fetch_title(url: str) -> str:

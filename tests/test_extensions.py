@@ -255,3 +255,296 @@ class TestDiscordIntegration:
         added = register_custom_commands(bot)
         assert added == 1
         bot.tree.add_command.assert_called_once()
+
+
+# ── requires_permissions ──────────────────────────────────────────────────────
+def _run_agent_tool(fn, arguments: dict, session_state: dict | None):
+    """Run an Agno Function the way an agent run does, with a request context."""
+    import copy
+
+    from agno.tools.function import FunctionCall
+
+    f = copy.deepcopy(fn)
+    f.process_entrypoint()
+
+    async def go():
+        token = set_request_context(session_state)
+        try:
+            return await FunctionCall(function=f, arguments=arguments).aexecute()
+        finally:
+            reset_request_context(token)
+
+    return asyncio.run(go())
+
+
+MOD = {"author_name": "Mod", "guild_id": 1, "author_permissions": ["manage_messages", "send_messages"]}
+MEMBER = {"author_name": "Ann", "guild_id": 1, "author_permissions": ["send_messages"]}
+DM = {"author_name": "Ann", "guild_id": None, "author_permissions": []}
+
+
+class TestRequiresPermissions:
+    def test_names_are_normalized(self):
+        @agent_tool(requires_permissions="manage_guild")
+        def a():
+            return ""
+
+        @command_and_tool(requires_permissions=["kick_members", "ban_members", "kick_members"])
+        def b(ctx):
+            return ""
+
+        assert [s.requires_permissions for s in tool_specs()] == [
+            ("manage_guild",),
+            ("kick_members", "ban_members"),
+        ]
+
+    def test_unknown_permission_fails_at_decoration(self):
+        # "manage_server" is the Discord UI label; discord.py calls it manage_guild.
+        with pytest.raises(ValueError, match="manage_server"):
+            @agent_tool(requires_permissions="manage_server")
+            def f():
+                return ""
+
+        assert tool_specs() == []
+
+    @pytest.mark.parametrize("is_async", [False, True])
+    def test_agent_call_allowed_with_permission(self, is_async):
+        calls = []
+        if is_async:
+            @agent_tool(name="purge", requires_permissions="manage_messages")
+            async def purge(ctx, n: int = 5):
+                calls.append(n)
+                return f"{ctx.author_name} purged {n}"
+        else:
+            @agent_tool(name="purge", requires_permissions="manage_messages")
+            def purge(ctx, n: int = 5):
+                calls.append(n)
+                return f"{ctx.author_name} purged {n}"
+
+        result = _run_agent_tool(get_custom_tools()[0], {"n": 3}, MOD)
+        assert result.status == "success"
+        assert result.result == "Mod purged 3"
+        assert calls == [3]
+
+    @pytest.mark.parametrize("is_async", [False, True])
+    def test_agent_call_refused_without_permission(self, is_async):
+        calls = []
+        if is_async:
+            @agent_tool(name="purge", requires_permissions="manage_messages")
+            async def purge(n: int = 5):
+                calls.append(n)
+                return "purged"
+        else:
+            # No ctx parameter: the check still reads the request context.
+            @agent_tool(name="purge", requires_permissions="manage_messages")
+            def purge(n: int = 5):
+                calls.append(n)
+                return "purged"
+
+        result = _run_agent_tool(get_custom_tools()[0], {"n": 3}, MEMBER)
+        # A refusal is an answer for the model to relay, not a tool failure.
+        assert result.status == "success"
+        assert result.result.startswith("Permission denied: 'purge' needs")
+        assert "manage_messages" in result.result and "Ann" in result.result
+        assert "not performed" in result.result
+        assert calls == []
+
+    def test_agent_call_refused_in_dm(self):
+        @agent_tool(name="purge", requires_permissions="manage_messages")
+        def purge():
+            return "purged"
+
+        result = _run_agent_tool(get_custom_tools()[0], {}, DM)
+        assert "direct messages" in result.result
+
+    def test_agent_call_refused_without_request_context(self):
+        # Fails closed: no context means no permissions.
+        @agent_tool(requires_permissions="manage_messages")
+        def purge():
+            return "purged"
+
+        assert _make_tool_wrapper(tool_specs()[0])().startswith("Permission denied")
+
+    def test_all_required_permissions_must_be_held(self):
+        @agent_tool(name="moderate", requires_permissions=["manage_messages", "ban_members"])
+        def moderate():
+            return "done"
+
+        result = _run_agent_tool(get_custom_tools()[0], {}, MOD)
+        assert "ban_members" in result.result and "manage_messages" not in result.result
+
+    def test_ungated_tool_is_unaffected(self):
+        @agent_tool()
+        def echo(x: str):
+            return x
+
+        assert _run_agent_tool(get_custom_tools()[0], {"x": "hi"}, MEMBER).result == "hi"
+
+
+def _interaction(**permissions):
+    import discord
+    from unittest.mock import AsyncMock
+
+    interaction = MagicMock()
+    interaction.user.display_name = "Ann"
+    interaction.user.guild_permissions = discord.Permissions(**permissions)
+    interaction.guild.id = 1
+    interaction.response.send_message = AsyncMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup.send = AsyncMock()
+    return interaction
+
+
+class TestCommandPermissions:
+    def _command(self, calls):
+        @command_and_tool(name="purge", requires_permissions="manage_messages")
+        async def purge(ctx, n: int = 5):
+            calls.append(n)
+            return f"purged {n}"
+
+        return _make_app_command(command_specs()[0])
+
+    def test_refused_without_permission(self):
+        calls = []
+        interaction = _interaction(send_messages=True)
+        asyncio.run(self._command(calls).callback(interaction, n=3))
+
+        assert calls == []
+        interaction.response.defer.assert_not_called()
+        interaction.response.send_message.assert_awaited_once()
+        text = interaction.response.send_message.await_args.args[0]
+        assert "manage_messages" in text
+        assert interaction.response.send_message.await_args.kwargs == {"ephemeral": True}
+
+    def test_runs_with_permission(self):
+        calls = []
+        interaction = _interaction(manage_messages=True)
+        asyncio.run(self._command(calls).callback(interaction, n=3))
+
+        assert calls == [3]
+        interaction.response.send_message.assert_not_called()
+        interaction.followup.send.assert_awaited_once_with("purged 3")
+
+    def test_administrator_passes(self):
+        # discord.py's guild_permissions reports every permission for admins.
+        import discord
+
+        calls = []
+        interaction = _interaction()
+        interaction.user.guild_permissions = discord.Permissions.all()
+        asyncio.run(self._command(calls).callback(interaction, n=1))
+        assert calls == [1]
+
+    def test_gated_command_is_hidden_and_guild_only(self):
+        import discord
+
+        cmd = self._command([])
+        assert cmd.default_permissions == discord.Permissions(manage_messages=True)
+        assert cmd.guild_only is True
+
+    def test_ungated_command_keeps_discord_defaults(self):
+        @command(name="ping")
+        def ping():
+            return "pong"
+
+        cmd = _make_app_command(command_specs()[0])
+        assert cmd.default_permissions is None
+        assert cmd.guild_only is False
+
+
+# ── Agno @tool options ────────────────────────────────────────────────────────
+def _hook(function_name, function_call, arguments):
+    return function_call(**arguments)
+
+
+# One sample value per option in TOOL_OPTIONS.
+OPTION_SAMPLES = {
+    "title": "Purge messages",
+    "annotations": {"destructiveHint": True},
+    "strict": False,
+    "instructions": "Only purge when asked.",
+    "add_instructions": False,
+    "show_result": True,
+    "stop_after_tool_call": True,
+    "pre_hook": lambda fc: None,
+    "post_hook": lambda fc: None,
+    "tool_hooks": [_hook],
+    "cache_results": True,
+    "cache_dir": "/tmp/dango-test-cache",
+    "cache_ttl": 60,
+}
+
+
+class TestToolOptions:
+    def test_samples_cover_every_supported_option(self):
+        from dango.extensions.registry import TOOL_OPTIONS
+
+        assert set(OPTION_SAMPLES) == TOOL_OPTIONS
+
+    @pytest.mark.parametrize("option", sorted(OPTION_SAMPLES))
+    def test_option_reaches_agno(self, option):
+        # Also catches an Agno upgrade that renames or drops an option.
+        value = OPTION_SAMPLES[option]
+
+        @agent_tool(name="t", **{option: value})
+        def t(x: str = ""):
+            return x
+
+        fn = get_custom_tools()
+        assert len(fn) == 1, f"Agno rejected {option}"
+        assert getattr(fn[0], option) == value
+
+    def test_command_and_tool_forwards_options(self):
+        @command_and_tool(name="t", show_result=True, requires_permissions="manage_guild")
+        def t(ctx):
+            return ""
+
+        assert get_custom_tools()[0].show_result is True
+        assert len(command_specs()) == 1
+
+    @pytest.mark.parametrize("option, value", [
+        ("requires_confirmation", True),
+        ("requires_user_input", True),
+        ("user_input_fields", ["x"]),
+        ("external_execution", True),
+        ("external_execution_silent", True),
+    ])
+    def test_hitl_options_are_rejected(self, option, value):
+        with pytest.raises(ValueError, match="never resumes a paused run"):
+            @agent_tool(**{option: value})
+            def t(x: str):
+                return x
+
+        assert tool_specs() == []
+
+    def test_agno_approval_decorator_is_rejected(self):
+        from agno.approval import approval
+
+        with pytest.raises(ValueError, match="@approval"):
+            @agent_tool()
+            @approval
+            def t(x: str):
+                return x
+
+    def test_unknown_option_is_rejected(self):
+        with pytest.raises(TypeError, match="cache_result"):
+            @agent_tool(cache_result=True)
+            def t():
+                return ""
+
+    def test_command_takes_no_tool_options(self):
+        with pytest.raises(TypeError, match="@command_and_tool"):
+            @command(show_result=True)
+            def t():
+                return ""
+
+    @pytest.mark.parametrize("kind", ["ctx", "permissions"])
+    def test_cache_results_rejected_when_result_depends_on_caller(self, kind):
+        with pytest.raises(ValueError, match="cache_results"):
+            if kind == "ctx":
+                @agent_tool(cache_results=True)
+                def t(ctx, x: str):
+                    return x
+            else:
+                @agent_tool(cache_results=True, requires_permissions="manage_guild")
+                def t(x: str):
+                    return x

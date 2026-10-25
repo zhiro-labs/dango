@@ -1,5 +1,5 @@
 ---
-summary: "Write your own Discord slash commands and agent tools in Python in a gitignored custom/ directory. Three decorators — @command, @agent_tool, @command_and_tool — with per-function opt-in for agent access. One function can be both a slash command and an LLM-callable tool; a normalized Ctx works across both call paths. register_tools() attaches any Agno toolkit or context provider (Drive, Gmail, Calendar, Slack, etc.) to the agent without editing core code."
+summary: "Write your own Discord slash commands and agent tools in Python in a gitignored custom/ directory. Three decorators — @command, @agent_tool, @command_and_tool — with per-function opt-in for agent access. One function can be both a slash command and an LLM-callable tool; a normalized Ctx works across both call paths. requires_permissions gates a function on the caller's Discord permissions on both paths, and Agno @tool options (show_result, tool_hooks, cache_results, ...) pass through; human-in-the-loop options are rejected. register_tools() attaches any Agno toolkit or context provider (Drive, Gmail, Calendar, Slack, etc.) to the agent without editing core code."
 description: "Write your own Discord slash commands and agent tools in Python, drop them into a gitignored custom/ directory, and let the agent call them — one function can be both a slash command and an LLM-callable tool."
 tags:
   - Tools
@@ -51,7 +51,9 @@ from dango.extensions import command, agent_tool, command_and_tool, Ctx
 
 Whether the agent can call your function is decided **only** by the decorator —
 there is no global switch, so exposing a function to the LLM is always an explicit,
-per-function opt-in. Keep destructive or privileged actions on `@command`.
+per-function opt-in. For privileged actions, add
+[`requires_permissions`](#restricting-who-can-call-a-function) so only members
+with the right Discord permission can trigger them, from chat or as a command.
 
 ## A command the agent can also call
 
@@ -136,12 +138,15 @@ def page_role(ctx: Ctx) -> str:
     return f"Paging {mentions} 🍡"
 ```
 
-`ctx.author_permissions` lets a tool gate privileged actions on the caller's
-own Discord permissions before doing anything:
+`ctx.author_permissions` holds the caller's own Discord permissions. To
+require a permission for the whole function, use
+[`requires_permissions`](#restricting-who-can-call-a-function); check
+`ctx.author_permissions` yourself only for finer rules, such as letting
+everyone list items but only moderators delete other people's:
 
 ```python
-    if "manage_guild" not in ctx.author_permissions:
-        return "You need Manage Server to do that."
+    if owner_id != ctx.author_id and "manage_messages" not in ctx.author_permissions:
+        return "Only the owner or a moderator can delete this."
 ```
 
 ::: info Mention/permission fields and the agent path
@@ -160,6 +165,76 @@ the command path** — on the agent path it is `None`. So agent-path tools can
 permissions, return them for the model to reason about) but cannot perform
 member/role mutations directly.
 :::
+
+## Restricting who can call a function
+
+`requires_permissions` takes one Discord permission name or a list; the caller
+must hold **all** of them. It works on all three decorators:
+
+```python
+from dango.extensions import agent_tool, Ctx
+
+@agent_tool(name="delete_event", requires_permissions="manage_events")
+async def delete_event(ctx: Ctx, title: str) -> str:
+    """Delete a scheduled event.
+
+    Args:
+        title: The event title.
+    """
+    ...
+```
+
+- **Checked on every call.** Before your function runs, Dango compares the
+  list with the caller's Discord permissions. Those come from the Discord
+  message or interaction, never from the model, so a prompt cannot get past the
+  check. Server owners and administrators hold every permission.
+- **Agent path:** when the caller lacks a permission, your function is not
+  called; the model gets a short refusal naming the missing permission and
+  tells the user. DMs have no server permissions, so gated tools are always
+  refused there.
+- **Command path:** the caller gets an ephemeral refusal. The slash command is
+  also registered as server-only and hidden from members without the
+  permissions (Discord's default member permissions). Server admins can change
+  who sees it under **Server Settings → Integrations**; the check still applies.
+- **Names are discord.py's**, as on
+  [`discord.Permissions`](https://discordpy.readthedocs.io/en/stable/api.html#discord.Permissions):
+  `manage_guild` (shown as *Manage Server* in Discord), `manage_messages`,
+  `manage_events`, `kick_members`, `administrator`, … An unknown name stops the
+  file from loading, with the error in the log, rather than locking everyone out.
+
+## Agno tool options
+
+`@agent_tool` and `@command_and_tool` pass other keyword arguments to Agno's
+[`@tool`](https://docs.agno.com/tools/creating-tools/python-functions):
+
+```python
+@agent_tool(name="server_stats", show_result=True, cache_results=True, cache_ttl=600)
+def server_stats(period: str = "week") -> str:
+    ...
+```
+
+| Option | Effect |
+|---|---|
+| `show_result` | Add the tool's output to the reply as is |
+| `stop_after_tool_call` | End the run after this tool; its output becomes the reply |
+| `instructions`, `add_instructions` | Extra instructions for using the tool, added to the system prompt |
+| `pre_hook`, `post_hook`, `tool_hooks` | Run your own code before/after the call ([Agno tool hooks](https://docs.agno.com/tools/hooks)) |
+| `cache_results`, `cache_dir`, `cache_ttl` | Reuse the result for repeated calls with the same arguments |
+| `title`, `annotations`, `strict` | Display name, MCP behaviour hints, strict parameter checking |
+
+Two kinds of options are rejected when the file loads, with the reason in the log:
+
+- **Human-in-the-loop options** (`requires_confirmation`, `requires_user_input`,
+  `user_input_fields`, `external_execution`, `external_execution_silent`, and
+  Agno's `@approval` decorator) pause the run until someone answers, and the
+  Discord flow never resumes a paused run, so the bot would never reply. Use
+  `requires_permissions`, or keep the action on `@command`.
+- **`cache_results` with a `ctx` parameter or `requires_permissions`.** Agno's
+  cache key covers only the model's arguments, so a cached result would be
+  shared across users, channels and servers, and would skip the permission
+  check.
+
+`@command` takes no tool options, since it is never an agent tool.
 
 ## Using built-in Agno toolkits & context providers
 
